@@ -1,0 +1,17 @@
+# 以UTF-8编码保存此文件
+PyQt6>=6.4.0
+PyQt6-Qt6>=6.4.0
+PyQt6-sip>=13.4.0
+
+# ASR语音识别相关依赖
+torch>=2.0.0
+funasr>=0.8.0
+numpy>=1.22.0
+
+# 视频处理相关依赖（根据需要取消注释）
+# moviepy>=1.0.3
+# ffmpeg-python>=0.2.0
+
+# 以下组件在实际应用实现中可能需要
+# openai-whisper>=20230918
+# SpeechRecognition>=3.10.0 
