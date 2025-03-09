@@ -29,10 +29,10 @@ class ASRProcessor:
         
         self.model = AutoModel(
             model="iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-            vad_model="damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-            punc_model="damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
-            spk_model="damo/speech_campplus_sv_zh-cn_16k-common",
-            device=device
+                  vad_model="damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+                  punc_model="damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
+                  spk_model="damo/speech_campplus_sv_zh-cn_16k-common",
+                  device=device
         )
         print("ASR模型已加载")
         
@@ -128,9 +128,9 @@ class ASRProcessor:
             # 获取FunASR的原始结果
             raw_result = self.model.generate(
                 input=audio_path,
-                batch_size_s=300,
-                return_spk_res=True,
-                return_raw_text=True,
+                     batch_size_s=300,
+                     return_spk_res=True,
+                     return_raw_text=True,
                 is_final=True
             )
             

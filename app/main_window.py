@@ -3,7 +3,8 @@
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QPushButton, QListWidget, QLabel, QFileDialog, 
-                            QSplitter, QSlider, QAbstractItemView, QProgressDialog)
+                            QSplitter, QSlider, QAbstractItemView, QProgressDialog,
+                            QDialog, QProgressBar)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from app.components.video_player import VideoPlayer
 from app.utils.asr_transcribe import ASRTranscribeThread
@@ -67,9 +68,9 @@ class MainWindow(QMainWindow):
         
         self.subtitle_list = QListWidget()
         self.subtitle_list.setMinimumWidth(350)
-        right_layout.addWidget(self.subtitle_list, 1)  # 1是伸展因子
+        right_layout.addWidget(self.subtitle_list, 1)
         
-        # 设置字幕列表样式和行为
+        # 设置字幕列表样式
         self.setup_subtitle_list()
         
         # 将左右面板添加到主布局
@@ -298,22 +299,74 @@ class MainWindow(QMainWindow):
         if not self.media_path:
             self.statusBar().showMessage("请先导入视频文件")
             return
-            
+        
         try:
-            # 导入模块
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QProgressBar
+            from PyQt6.QtCore import Qt, QTimer
+            
+            # 立即创建并显示对话框
+            self.progress_dialog = QDialog(self)
+            self.progress_dialog.setWindowTitle("转录中")
+            self.progress_dialog.setMinimumWidth(300)
+            self.progress_dialog.setMinimumHeight(150)
+            self.progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+            self.progress_dialog.setStyleSheet("QDialog { background-color: #121820; }")
+            
+            # 设置布局
+            layout = QVBoxLayout(self.progress_dialog)
+            layout.setContentsMargins(20, 20, 20, 20)
+            
+            # 添加标签
+            label = QLabel("正在准备转录...", self.progress_dialog)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setStyleSheet("font-size: 14px; color: #e1e1e1; margin-bottom: 20px;")
+            layout.addWidget(label)
+            self.progress_label = label
+            
+            # 添加无限循环的进度条
+            progress_bar = QProgressBar(self.progress_dialog)
+            progress_bar.setMinimum(0)
+            progress_bar.setMaximum(0)  # 无限循环模式
+            progress_bar.setStyleSheet("""
+                QProgressBar {
+                    border: 2px solid #2196f3;
+                    border-radius: 5px;
+                    background-color: #1a1f2a;
+                    height: 25px;
+                    text-align: center;
+                }
+                
+                QProgressBar::chunk {
+                    background-color: #2196f3;
+                    width: 10px;
+                }
+            """)
+            layout.addWidget(progress_bar)
+            
+            # 立即显示对话框
+            self.progress_dialog.setAutoFillBackground(True)
+            self.progress_dialog.show()
+            
+            # 使用QTimer延迟初始化ASR处理器和启动转录，让界面先响应
+            QTimer.singleShot(100, self.start_transcription_thread)
+            
+        except Exception as e:
+            error_msg = f"创建转录对话框失败: {str(e)}"
+            self.statusBar().showMessage(error_msg)
+            print(error_msg)
+            import traceback
+            print(traceback.format_exc())
+
+    def start_transcription_thread(self):
+        """启动转录线程（在对话框显示后调用）"""
+        try:
+            # 更新标签
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setText("正在转录视频，请稍候...")
+            
+            # 导入必要的模块
             from app.utils.asr_transcribe import ASRTranscribeThread
             from app.components.asr import ASRProcessor
-            from PyQt6.QtWidgets import QProgressDialog
-            from PyQt6.QtCore import Qt
-            
-            # 创建进度对话框
-            self.progress_dialog = QProgressDialog("准备转录中...", "取消", 0, 100, self)
-            self.progress_dialog.setWindowTitle("转录进度")
-            self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-            self.progress_dialog.setMinimumDuration(0)  # 立即显示
-            self.progress_dialog.setMinimumWidth(300)
-            self.progress_dialog.setValue(0)
-            self.progress_dialog.show()
             
             # 创建ASR处理器
             asr_processor = ASRProcessor()
@@ -325,9 +378,18 @@ class MainWindow(QMainWindow):
             self.asr_thread.start()
             
         except Exception as e:
-            error_msg = f"转录初始化失败: {str(e)}"
+            # 关闭进度对话框
+            if hasattr(self, 'progress_dialog') and self.progress_dialog:
+                self.progress_dialog.close()
+            
+            error_msg = f"启动转录线程失败: {str(e)}"
             self.statusBar().showMessage(error_msg)
             print(error_msg)
+            
+            # 显示错误消息
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "转录错误", f"无法启动转录过程: {str(e)}", 
+                                QMessageBox.StandardButton.Ok)
             
             import traceback
             print(traceback.format_exc())
@@ -339,22 +401,8 @@ class MainWindow(QMainWindow):
             progress_text: 进度文本或进度值
         """
         try:
-            # 更新状态栏
-            if isinstance(progress_text, int):
-                message = f"转录中... {progress_text}%"
-                # 更新进度对话框
-                if hasattr(self, 'progress_dialog') and self.progress_dialog:
-                    self.progress_dialog.setValue(progress_text)
-            else:
-                message = str(progress_text)
-                # 更新进度对话框标签
-                if hasattr(self, 'progress_dialog') and self.progress_dialog:
-                    self.progress_dialog.setLabelText(message)
-                    # 如果是文本消息，移动进度条以显示活动
-                    current = self.progress_dialog.value()
-                    if current < 99:  # 避免完成
-                        self.progress_dialog.setValue(current + 1)
-            
+            # 只更新状态栏，不更新进度对话框
+            message = str(progress_text) if not isinstance(progress_text, int) else f"转录中... {progress_text}%"
             self.statusBar().showMessage(message)
         except Exception as e:
             print(f"更新进度出错: {str(e)}")
@@ -364,27 +412,39 @@ class MainWindow(QMainWindow):
         try:
             # 关闭进度对话框
             if hasattr(self, 'progress_dialog') and self.progress_dialog:
-                self.progress_dialog.setValue(100)
                 self.progress_dialog.close()
             
             # 确保结果是有效的
             if subtitles:
                 print(f"收到转录结果: {len(subtitles)} 条字幕")
-                if len(subtitles) > 0:
-                    print(f"第一条字幕: {subtitles[0]}")
-                    
+                
+                # 显示转录成功的提示
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "转录完成", f"转录已完成，共生成 {len(subtitles)} 条字幕。", 
+                                        QMessageBox.StandardButton.Ok)
+                
                 self.subtitles = subtitles
                 self.update_subtitle_list()
                 self.statusBar().showMessage(f"转录完成，共 {len(subtitles)} 条字幕")
             else:
                 print("未接收到有效的转录结果")
                 self.statusBar().showMessage("转录失败，未生成字幕")
+                
+                # 显示转录失败的提示
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "转录失败", "转录过程未生成有效字幕，请检查视频文件。", 
+                                    QMessageBox.StandardButton.Ok)
         except Exception as e:
             error_msg = f"处理转录结果出错: {str(e)}"
             print(error_msg)
             import traceback
             print(traceback.format_exc())
             self.statusBar().showMessage("转录出错，请检查控制台输出")
+            
+            # 显示错误提示
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "转录错误", f"处理转录结果时出错: {str(e)}", 
+                                QMessageBox.StandardButton.Ok)
 
     def update_subtitle_list(self):
         """更新字幕列表"""
@@ -500,34 +560,68 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'subtitle_list'):
             from PyQt6.QtWidgets import QAbstractItemView
             
-            # 设置字幕列表样式
+            # 设置字幕列表样式 - 使用更柔和的颜色
             self.subtitle_list.setAlternatingRowColors(True)
             self.subtitle_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
             self.subtitle_list.setStyleSheet("""
                 QListWidget {
-                    background-color: #1a1f2a;
-                    color: #e1e1e1;
-                    border: 2px solid #2196f3;
-                    border-radius: 5px;
-                    padding: 5px;
+                    background-color: #1e2430;  /* 更柔和的深蓝灰色背景 */
+                    color: #e0e0e0;  /* 亮一点的文本颜色 */
+                    border: 2px solid #1976d2;  /* 蓝色边框 */
+                    border-radius: 6px;
+                    padding: 6px;
                     font-size: 13px;
-                    alternate-background-color: #202633;
+                    alternate-background-color: #283447;  /* 稍微浅一点的交替行背景 */
                 }
+                
                 QListWidget::item {
-                    border-bottom: 1px solid #30363d;
-                    padding: 5px;
-                    margin: 2px 0px;
+                    border-bottom: 1px solid #394b61;  /* 更柔和的分隔线 */
+                    padding: 8px 5px;  /* 增加垂直内边距 */
+                    margin: 3px 1px;  /* 增加间距 */
+                    border-radius: 4px;  /* 圆角项目 */
                 }
+                
                 QListWidget::item:hover {
-                    background-color: #2c3e50;
+                    background-color: #324054;  /* 更柔和的悬停背景 */
+                    border: 1px solid #4fc3f7;  /* 悬停时的亮蓝色边框 */
                 }
+                
                 QListWidget::item:selected {
-                    background-color: #1976d2;
-                    color: white;
+                    background-color: #1769aa;  /* 稍深的蓝色选中背景 */
+                    color: #ffffff;  /* 选中项的白色文本 */
                     border: none;
+                }
+                
+                /* 滚动条样式 */
+                QScrollBar:vertical {
+                    border: none;
+                    background: #1e2430;
+                    width: 10px;
+                    margin: 0px;
+                    border-radius: 5px;
+                }
+                
+                QScrollBar::handle:vertical {
+                    background: #4f5b69;  /* 更柔和的滚动条颜色 */
+                    min-height: 30px;
+                    border-radius: 5px;
+                }
+                
+                QScrollBar::handle:vertical:hover {
+                    background: #5f6b79;  /* 悬停时稍亮 */
+                }
+                
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    border: none;
+                    background: none;
+                    height: 0px;
+                }
+                
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                    background: none;
                 }
             """)
             
             # 连接项目点击事件
             self.subtitle_list.itemClicked.connect(self.on_subtitle_clicked)
-            print("字幕列表已配置，使用点击高亮效果")
+            print("字幕列表样式已更新，使用更柔和的背景颜色")
