@@ -3,12 +3,14 @@
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QPushButton, QListWidget, QLabel, QFileDialog, 
-                            QSplitter, QSlider, QAbstractItemView, QProgressDialog,
-                            QDialog, QProgressBar)
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+                            QSplitter, QSlider, QTabWidget, QTextEdit, QCheckBox,
+                            QAbstractItemView, QMessageBox)
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from app.components.video_player import VideoPlayer
 from app.utils.asr_transcribe import ASRTranscribeThread
 from app.components.asr import ASRProcessor
+import os
 
 class MainWindow(QMainWindow):
     """主窗口类"""
@@ -18,6 +20,8 @@ class MainWindow(QMainWindow):
         self.media_path = None
         self.subtitles = None
         self.current_highlighted_index = -1
+        self.subtitle_segments = []  # 存储每个字幕段的开始位置和结束位置
+        self.cut_segments = []  # 存储要删除的片段
         self.setup_ui()
         
     def setup_ui(self):
@@ -40,7 +44,7 @@ class MainWindow(QMainWindow):
         self.left_layout.addWidget(self.video_player)
         
         # 添加播放控制面板
-        self.create_playback_controls()
+        self.setup_playback_controls()
         
         # 右侧面板 - 字幕和控制按钮
         right_panel = QWidget()
@@ -58,20 +62,71 @@ class MainWindow(QMainWindow):
         self.transcribe_button.clicked.connect(self.transcribe_video)
         self.transcribe_button.setMinimumHeight(40)
         
+        # 添加文本剪辑按钮
+        self.text_edit_button = QPushButton("按文本剪辑")
+        self.text_edit_button.clicked.connect(self.show_text_editor)
+        self.text_edit_button.setMinimumHeight(40)
+        
         button_layout.addWidget(self.import_button)
         button_layout.addWidget(self.transcribe_button)
+        button_layout.addWidget(self.text_edit_button)
         right_layout.addLayout(button_layout)
         
-        # 字幕列表
+        # 创建标签页控件
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: 2px solid #1976d2;
+                border-radius: 6px;
+                background-color: #1e2430;
+            }
+            QTabBar::tab {
+                background-color: #1a1f2a;
+                color: #e0e0e0;
+                border: 2px solid #1976d2;
+                border-bottom: none;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                padding: 8px 12px;
+                margin-right: 4px;
+            }
+            QTabBar::tab:selected {
+                background-color: #1e2430;
+                border-bottom: 2px solid #1e2430;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #283447;
+            }
+        """)
+        
+        # 字幕列表标签页
+        self.subtitle_tab = QWidget()
+        subtitle_tab_layout = QVBoxLayout(self.subtitle_tab)
+        
         subtitle_label = QLabel("字幕列表")
-        right_layout.addWidget(subtitle_label)
+        subtitle_tab_layout.addWidget(subtitle_label)
         
         self.subtitle_list = QListWidget()
         self.subtitle_list.setMinimumWidth(350)
-        right_layout.addWidget(self.subtitle_list, 1)
+        self.subtitle_list.setAlternatingRowColors(True)
+        self.subtitle_list.itemClicked.connect(self.on_subtitle_clicked)
+        subtitle_tab_layout.addWidget(self.subtitle_list, 1)  # 1是伸展因子
         
-        # 设置字幕列表样式
-        self.setup_subtitle_list()
+        # 文本剪辑标签页
+        self.text_edit_tab = QWidget()
+        self.text_edit_tab_layout = QVBoxLayout(self.text_edit_tab)
+        
+        text_edit_label = QLabel("文本剪辑 (选中并标记不需要的部分)")
+        self.text_edit_tab_layout.addWidget(text_edit_label)
+        
+        # 这里先不添加内容，在show_text_editor方法中动态创建
+        
+        # 添加标签页到标签页控件
+        self.tab_widget.addTab(self.subtitle_tab, "字幕列表")
+        self.tab_widget.addTab(self.text_edit_tab, "文本剪辑")
+        
+        # 添加标签页控件到右侧面板
+        right_layout.addWidget(self.tab_widget, 1)  # 1是伸展因子
         
         # 将左右面板添加到主布局
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -95,32 +150,8 @@ class MainWindow(QMainWindow):
         
         # 确保字幕更新定时器启动
         self._ensure_subtitle_update_timer()
-
-    def apply_simple_style(self):
-        """应用简单样式，避免语法错误"""
-        # 主窗口样式
-        self.setStyleSheet("QMainWindow { background-color: #121820; color: #e1e1e1; }")
         
-        # 按钮样式
-        if hasattr(self, 'import_button') and hasattr(self, 'transcribe_button'):
-            button_style = "QPushButton { background-color: #1a1f2a; color: #4fc3f7; border: 2px solid #2196f3; border-radius: 5px; padding: 8px; font-weight: bold; }"
-            self.import_button.setStyleSheet(button_style)
-            self.import_button.setText("📂 导入视频")
-            self.transcribe_button.setStyleSheet(button_style)
-            self.transcribe_button.setText("🎤 转录字幕")
-        
-        # 字幕列表样式
-        if hasattr(self, 'subtitle_list'):
-            subtitle_style = "QListWidget { background-color: #1a1f2a; color: #e1e1e1; border: 2px solid #2196f3; border-radius: 5px; }"
-            self.subtitle_list.setStyleSheet(subtitle_style)
-        
-        # 播放控制样式
-        if hasattr(self, 'play_button') and hasattr(self, 'stop_button'):
-            control_style = "QPushButton { background-color: #1a1f2a; color: #e1e1e1; border: 2px solid #2196f3; border-radius: 20px; font-weight: bold; }"
-            self.play_button.setStyleSheet(control_style)
-            self.stop_button.setStyleSheet(control_style)
-
-    def create_playback_controls(self):
+    def setup_playback_controls(self):
         """创建播放控制面板"""
         control_panel = QWidget()
         control_layout = QHBoxLayout(control_panel)
@@ -149,6 +180,32 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.progress_slider)
         
         self.left_layout.addWidget(control_panel)
+
+    def apply_simple_style(self):
+        """应用简单样式，避免语法错误"""
+        # 主窗口样式
+        self.setStyleSheet("QMainWindow { background-color: #121820; color: #e1e1e1; }")
+        
+        # 按钮样式
+        if hasattr(self, 'import_button') and hasattr(self, 'transcribe_button') and hasattr(self, 'text_edit_button'):
+            button_style = "QPushButton { background-color: #1a1f2a; color: #4fc3f7; border: 2px solid #2196f3; border-radius: 5px; padding: 8px; font-weight: bold; }"
+            self.import_button.setStyleSheet(button_style)
+            self.import_button.setText("📂 导入视频")
+            self.transcribe_button.setStyleSheet(button_style)
+            self.transcribe_button.setText("🎤 转录字幕")
+            self.text_edit_button.setStyleSheet(button_style)
+            self.text_edit_button.setText("✂️ 文本剪辑")
+        
+        # 字幕列表样式
+        if hasattr(self, 'subtitle_list'):
+            subtitle_style = "QListWidget { background-color: #1a1f2a; color: #e0e0e0; border: 2px solid #2196f3; border-radius: 5px; }"
+            self.subtitle_list.setStyleSheet(subtitle_style)
+        
+        # 播放控制样式
+        if hasattr(self, 'play_button') and hasattr(self, 'stop_button'):
+            control_style = "QPushButton { background-color: #1a1f2a; color: #e1e1e1; border: 2px solid #2196f3; border-radius: 20px; font-weight: bold; }"
+            self.play_button.setStyleSheet(control_style)
+            self.stop_button.setStyleSheet(control_style)
 
     def toggle_playback(self):
         """切换播放/暂停状态"""
@@ -240,71 +297,51 @@ class MainWindow(QMainWindow):
             if matching_index >= 0 and matching_index != getattr(self, 'current_highlighted_index', -1):
                 print(f"找到匹配字幕索引: {matching_index}, 文本: {self.subtitles[matching_index].get('text', '')}")
                 
-                # 使用 setCurrentRow 并确保视觉反馈
+                # 使用 setCurrentRow 而不是 setItemSelected
                 if matching_index < self.subtitle_list.count():
-                    # 将项目设置为当前项
                     self.subtitle_list.setCurrentRow(matching_index)
+                    # 滚动到当前项
+                    self.subtitle_list.scrollToItem(self.subtitle_list.item(matching_index))
                     
-                    # 获取项目并设置背景色来增强高亮效果
-                    item = self.subtitle_list.item(matching_index)
-                    if item:
-                        # 设置项目背景色以确保高亮明显
-                        item.setBackground(self.get_highlight_color())
-                        
-                        # 清除之前高亮项的背景色
-                        if hasattr(self, 'current_highlighted_index') and self.current_highlighted_index >= 0:
-                            old_item = self.subtitle_list.item(self.current_highlighted_index)
-                            if old_item and self.current_highlighted_index != matching_index:
-                                old_item.setBackground(self.get_normal_color())
-                        
-                        # 滚动到当前项以确保可见
-                        self.subtitle_list.scrollToItem(item, hint=self.subtitle_list.ScrollHint.PositionAtCenter)
-                        
-                        # 更新当前高亮索引
-                        self.current_highlighted_index = matching_index
-                        
+                    # 更新当前高亮索引
+                    self.current_highlighted_index = matching_index
+                    
         except Exception as e:
             print(f"更新字幕高亮出错: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
-
-    def get_highlight_color(self):
-        """获取高亮颜色"""
-        from PyQt6.QtGui import QColor
-        return QColor(41, 128, 185)  # 蓝色
-
-    def get_normal_color(self):
-        """获取普通项目颜色"""
-        from PyQt6.QtGui import QColor
-        return QColor(26, 31, 42)  # 深灰色背景
 
     def import_video(self):
         """导入视频文件"""
-        file_dialog = QFileDialog()
-        file_path, _ = file_dialog.getOpenFileName(
-            self, "选择视频文件", "", "视频文件 (*.mp4 *.avi *.mkv *.mov *.wmv)"
-        )
-        
-        if file_path:
-            self.media_path = file_path
-            self.video_player.load_media(file_path)
-            self.statusBar().showMessage(f"已加载视频: {file_path}")
+        try:
+            file_dialog = QFileDialog()
+            file_path, _ = file_dialog.getOpenFileName(
+                self, "选择视频文件", "", "视频文件 (*.mp4 *.avi *.mkv *.mov *.wmv)"
+            )
             
-            # 清空字幕
-            self.subtitles = None
-            self.update_subtitle_list()
+            if file_path:
+                print(f"尝试导入视频: {file_path}")
+                self.media_path = file_path
+                self.video_player.load_media(file_path)
+                self.statusBar().showMessage(f"已加载视频: {file_path}")
+                print(f"成功导入视频: {file_path}")
+                
+                # 清空字幕
+                self.subtitles = None
+                self.update_subtitle_list()
+        except Exception as e:
+            print(f"导入视频失败: {str(e)}")
+            self.statusBar().showMessage(f"导入视频失败: {str(e)}")
 
     def transcribe_video(self):
         """转录视频字幕"""
         if not self.media_path:
             self.statusBar().showMessage("请先导入视频文件")
             return
-        
+            
         try:
             from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QProgressBar
-            from PyQt6.QtCore import Qt, QTimer
+            from PyQt6.QtCore import Qt
             
-            # 立即创建并显示对话框
+            # 创建简单的进度对话框
             self.progress_dialog = QDialog(self)
             self.progress_dialog.setWindowTitle("转录中")
             self.progress_dialog.setMinimumWidth(300)
@@ -364,10 +401,6 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'progress_label'):
                 self.progress_label.setText("正在转录视频，请稍候...")
             
-            # 导入必要的模块
-            from app.utils.asr_transcribe import ASRTranscribeThread
-            from app.components.asr import ASRProcessor
-            
             # 创建ASR处理器
             asr_processor = ASRProcessor()
             
@@ -381,13 +414,12 @@ class MainWindow(QMainWindow):
             # 关闭进度对话框
             if hasattr(self, 'progress_dialog') and self.progress_dialog:
                 self.progress_dialog.close()
-            
+                
             error_msg = f"启动转录线程失败: {str(e)}"
             self.statusBar().showMessage(error_msg)
             print(error_msg)
             
             # 显示错误消息
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "转录错误", f"无法启动转录过程: {str(e)}", 
                                 QMessageBox.StandardButton.Ok)
             
@@ -419,7 +451,6 @@ class MainWindow(QMainWindow):
                 print(f"收到转录结果: {len(subtitles)} 条字幕")
                 
                 # 显示转录成功的提示
-                from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.information(self, "转录完成", f"转录已完成，共生成 {len(subtitles)} 条字幕。", 
                                         QMessageBox.StandardButton.Ok)
                 
@@ -431,7 +462,6 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("转录失败，未生成字幕")
                 
                 # 显示转录失败的提示
-                from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "转录失败", "转录过程未生成有效字幕，请检查视频文件。", 
                                     QMessageBox.StandardButton.Ok)
         except Exception as e:
@@ -442,7 +472,6 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("转录出错，请检查控制台输出")
             
             # 显示错误提示
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "转录错误", f"处理转录结果时出错: {str(e)}", 
                                 QMessageBox.StandardButton.Ok)
 
@@ -461,7 +490,7 @@ class MainWindow(QMainWindow):
                 
             # 添加字幕项
             for subtitle in self.subtitles:
-                text = subtitle.get('text', '').strip()
+                text = subtitle.get('text', '')
                 start_time = subtitle.get('start_time', 0)
                 end_time = subtitle.get('end_time', 0)
                 
@@ -469,20 +498,14 @@ class MainWindow(QMainWindow):
                 start_str = self.format_time(start_time)
                 end_str = self.format_time(end_time)
                 
-                # 设置显示文本 (保持简洁)
-                if len(text) > 50:  # 如果文本太长，截断显示
-                    display_text = f"{text[:50]}... ({start_str})"
-                else:
-                    display_text = f"{text} ({start_str})"
+                # 设置显示文本
+                display_text = f"{text} ({start_str}-{end_str})"
                 
                 # 添加到列表
                 self.subtitle_list.addItem(display_text)
                 
             print(f"字幕列表更新完成，显示 {len(self.subtitles)} 条")
             print("字幕列表已更新")
-            
-            # 重置当前高亮索引
-            self.current_highlighted_index = -1
             
         except Exception as e:
             print(f"更新字幕列表出错: {str(e)}")
@@ -555,73 +578,483 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"更新当前字幕出错: {str(e)}")
 
-    def setup_subtitle_list(self):
-        """设置字幕列表样式和行为"""
-        if hasattr(self, 'subtitle_list'):
-            from PyQt6.QtWidgets import QAbstractItemView
+    def show_text_editor(self):
+        """显示文本剪辑编辑器"""
+        if not hasattr(self, 'subtitles') or not self.subtitles:
+            QMessageBox.warning(self, "无字幕数据", "请先转录字幕，再使用文本剪辑功能。", 
+                               QMessageBox.StandardButton.Ok)
+            return
+        
+        try:
+            # 切换到文本剪辑标签页
+            self.tab_widget.setCurrentIndex(1)
             
-            # 设置字幕列表样式 - 使用更柔和的颜色
-            self.subtitle_list.setAlternatingRowColors(True)
-            self.subtitle_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-            self.subtitle_list.setStyleSheet("""
-                QListWidget {
-                    background-color: #1e2430;  /* 更柔和的深蓝灰色背景 */
-                    color: #e0e0e0;  /* 亮一点的文本颜色 */
-                    border: 2px solid #1976d2;  /* 蓝色边框 */
+            # 清空现有布局
+            while self.text_edit_tab_layout.count():
+                item = self.text_edit_tab_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
+            
+            # 创建新的文本编辑器
+            text_edit_label = QLabel("文本剪辑 - 选中要删除的文本并点击标记按钮")
+            text_edit_label.setStyleSheet("color: #4fc3f7; font-size: 14px; font-weight: bold;")
+            self.text_edit_tab_layout.addWidget(text_edit_label)
+            
+            # 说明文本
+            instruction_label = QLabel('使用方法：选中要删除的文本，然后点击"标记删除"按钮。带删除线的部分将在剪辑时被移除。')
+            instruction_label.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: normal;")
+            instruction_label.setWordWrap(True)
+            self.text_edit_tab_layout.addWidget(instruction_label)
+            
+            # 创建文本编辑器
+            self.transcript_text_edit = QTextEdit()
+            self.transcript_text_edit.setReadOnly(False)
+            self.transcript_text_edit.setStyleSheet("""
+                QTextEdit {
+                    background-color: #1e2430;
+                    color: #e0e0e0;
+                    border: 2px solid #1976d2;
                     border-radius: 6px;
-                    padding: 6px;
+                    padding: 8px;
                     font-size: 13px;
-                    alternate-background-color: #283447;  /* 稍微浅一点的交替行背景 */
+                    line-height: 1.5;
                 }
-                
-                QListWidget::item {
-                    border-bottom: 1px solid #394b61;  /* 更柔和的分隔线 */
-                    padding: 8px 5px;  /* 增加垂直内边距 */
-                    margin: 3px 1px;  /* 增加间距 */
-                    border-radius: 4px;  /* 圆角项目 */
-                }
-                
-                QListWidget::item:hover {
-                    background-color: #324054;  /* 更柔和的悬停背景 */
-                    border: 1px solid #4fc3f7;  /* 悬停时的亮蓝色边框 */
-                }
-                
-                QListWidget::item:selected {
-                    background-color: #1769aa;  /* 稍深的蓝色选中背景 */
-                    color: #ffffff;  /* 选中项的白色文本 */
+            """)
+            self.text_edit_tab_layout.addWidget(self.transcript_text_edit)
+            
+            # 操作按钮区域
+            button_layout = QHBoxLayout()
+            
+            self.mark_delete_button = QPushButton("标记删除选中文本")
+            self.mark_delete_button.clicked.connect(self.mark_text_for_deletion)
+            self.mark_delete_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #d32f2f;
+                    color: white;
                     border: none;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    font-weight: bold;
                 }
-                
-                /* 滚动条样式 */
-                QScrollBar:vertical {
-                    border: none;
-                    background: #1e2430;
-                    width: 10px;
-                    margin: 0px;
-                    border-radius: 5px;
-                }
-                
-                QScrollBar::handle:vertical {
-                    background: #4f5b69;  /* 更柔和的滚动条颜色 */
-                    min-height: 30px;
-                    border-radius: 5px;
-                }
-                
-                QScrollBar::handle:vertical:hover {
-                    background: #5f6b79;  /* 悬停时稍亮 */
-                }
-                
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                    border: none;
-                    background: none;
-                    height: 0px;
-                }
-                
-                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                    background: none;
+                QPushButton:hover {
+                    background-color: #f44336;
                 }
             """)
             
-            # 连接项目点击事件
-            self.subtitle_list.itemClicked.connect(self.on_subtitle_clicked)
-            print("字幕列表样式已更新，使用更柔和的背景颜色")
+            self.preview_button = QPushButton("预览剪辑效果")
+            self.preview_button.clicked.connect(self.preview_cuts)
+            self.preview_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #1976d2;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #2196f3;
+                }
+            """)
+            
+            self.export_button = QPushButton("导出剪辑计划")
+            self.export_button.clicked.connect(self.export_cut_plan)
+            self.export_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #388e3c;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #4caf50;
+                }
+            """)
+            
+            # 配置选项
+            self.auto_mark_checkbox = QCheckBox("选中文本后自动标记为删除")
+            self.auto_mark_checkbox.setChecked(False)
+            self.auto_mark_checkbox.toggled.connect(self.toggle_auto_mark)
+            self.auto_mark_checkbox.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+            
+            # 添加到布局
+            button_layout.addWidget(self.mark_delete_button)
+            button_layout.addWidget(self.preview_button)
+            button_layout.addWidget(self.export_button)
+            
+            self.text_edit_tab_layout.addLayout(button_layout)
+            self.text_edit_tab_layout.addWidget(self.auto_mark_checkbox)
+            
+            # 填充逐字稿数据
+            self.populate_transcript_data()
+            
+        except Exception as e:
+            error_msg = f"加载文本编辑器失败: {str(e)}"
+            print(error_msg)
+            import traceback
+            print(traceback.format_exc())
+            
+            QMessageBox.critical(self, "错误", f"加载文本编辑器失败: {str(e)}", 
+                               QMessageBox.StandardButton.Ok)
+
+    def populate_transcript_data(self):
+        """填充逐字稿数据，跟踪每个字幕段的位置"""
+        try:
+            if not hasattr(self, 'subtitles') or not self.subtitles:
+                return
+                
+            # 构建完整的逐字稿文本
+            full_text = ""
+            self.subtitle_segments = []
+            
+            # 添加每个字幕的文本，并记录其位置
+            for subtitle in self.subtitles:
+                text = subtitle.get('text', '').strip()
+                start_time = subtitle.get('start_time', 0)
+                end_time = subtitle.get('end_time', 0)
+                
+                # 记录此字幕在全文中的开始位置
+                start_pos = len(full_text)
+                
+                # 添加文本，确保字幕之间有空格
+                if full_text and not full_text.endswith(' '):
+                    full_text += ' '
+                    
+                full_text += text
+                
+                # 记录结束位置
+                end_pos = len(full_text)
+                
+                # 保存这个字幕段的信息
+                self.subtitle_segments.append({
+                    'start_pos': start_pos,
+                    'end_pos': end_pos,
+                    'start_time': start_time,
+                    'end_time': end_time,
+                    'text': text
+                })
+            
+            # 设置到文本编辑器
+            if hasattr(self, 'transcript_text_edit'):
+                self.transcript_text_edit.setText(full_text)
+            
+            print(f"已导入逐字稿，共 {len(self.subtitles)} 个片段")
+            
+        except Exception as e:
+            print(f"填充逐字稿数据出错: {str(e)}")
+
+    def mark_text_for_deletion(self):
+        """标记选中的文本为要删除的部分，使用删除线样式"""
+        try:
+            if not hasattr(self, 'transcript_text_edit'):
+                return
+                
+            # 获取当前选择
+            cursor = self.transcript_text_edit.textCursor()
+            if not cursor.hasSelection():
+                return
+                
+            selection_start = cursor.selectionStart()
+            selection_end = cursor.selectionEnd()
+            selected_text = cursor.selectedText()
+            
+            if not selected_text.strip():
+                return  # 跳过空白选择
+                
+            # 设置删除线格式
+            format = QTextCharFormat()
+            format.setFontStrikeOut(True)  # 使用删除线
+            format.setForeground(QColor(200, 100, 100))  # 使用红色文本
+            
+            cursor.setPosition(selection_start)
+            cursor.setPosition(selection_end, QTextCursor.MoveMode.KeepAnchor)
+            cursor.setCharFormat(format)
+            
+            # 找出这个选区覆盖了哪些字幕段
+            affected_segments = []
+            for i, segment in enumerate(self.subtitle_segments):
+                # 检查选区和字幕段是否有重叠
+                if not (selection_end <= segment['start_pos'] or selection_start >= segment['end_pos']):
+                    affected_segments.append(i)
+            
+            if affected_segments:
+                # 创建一个新的剪辑标记
+                cut_info = {
+                    'start_idx': min(affected_segments),
+                    'end_idx': max(affected_segments),
+                    'start_time': self.subtitle_segments[min(affected_segments)]['start_time'],
+                    'end_time': self.subtitle_segments[max(affected_segments)]['end_time'],
+                    'text': selected_text
+                }
+                
+                # 添加到剪辑列表
+                self.cut_segments.append(cut_info)
+                
+                # 更新状态栏
+                self.statusBar().showMessage(f"已标记删除: {self.format_time(cut_info['start_time'])} - {self.format_time(cut_info['end_time'])}")
+        except Exception as e:
+            print(f"标记删除文本出错: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+
+    def toggle_auto_mark(self, checked):
+        """切换自动标记模式"""
+        try:
+            if checked:
+                # 连接文本选择变化信号
+                self.transcript_text_edit.selectionChanged.connect(self.mark_text_for_deletion)
+                print("启用自动标记模式")
+            else:
+                # 断开信号连接
+                try:
+                    self.transcript_text_edit.selectionChanged.disconnect(self.mark_text_for_deletion)
+                except:
+                    pass
+                print("禁用自动标记模式")
+        except Exception as e:
+            print(f"切换自动标记模式出错: {str(e)}")
+
+    def preview_cuts(self):
+        """预览剪辑效果"""
+        if not hasattr(self, 'cut_segments') or not self.cut_segments:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "无剪辑片段", "请先标记要删除的文本片段。", 
+                                   QMessageBox.StandardButton.Ok)
+            return
+        
+        try:
+            # 切换回字幕标签页
+            self.tab_widget.setCurrentIndex(0)
+            
+            # 构建跳过片段的时间表
+            skip_segments = []
+            for cut in self.cut_segments:
+                skip_segments.append((cut['start_time'], cut['end_time']))
+            
+            # 按时间排序
+            skip_segments.sort(key=lambda x: x[0])
+            
+            # 合并重叠的片段
+            merged_segments = []
+            for segment in skip_segments:
+                if not merged_segments or segment[0] > merged_segments[-1][1]:
+                    merged_segments.append(segment)
+                else:
+                    merged_segments[-1] = (merged_segments[-1][0], max(merged_segments[-1][1], segment[1]))
+            
+            # 存储跳过片段以供播放使用
+            self.preview_skip_segments = merged_segments
+            
+            # 开始预览播放
+            if hasattr(self, 'video_player'):
+                self.video_player.seek(0)  # 从头开始播放
+                self.video_player.play()
+                self.preview_mode = True
+                
+                # 使用定时器检查是否需要跳过
+                if not hasattr(self, 'preview_timer'):
+                    from PyQt6.QtCore import QTimer
+                    self.preview_timer = QTimer()
+                    self.preview_timer.setInterval(50)  # 50ms检查一次
+                    self.preview_timer.timeout.connect(self.check_preview_skip)
+                    
+                    # 添加视频结束检测定时器
+                    self.end_check_timer = QTimer()
+                    self.end_check_timer.setInterval(500)  # 500ms检查一次
+                    self.end_check_timer.timeout.connect(self.check_preview_ended)
+                
+                self.preview_timer.start()
+                self.end_check_timer.start()
+                
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "预览模式", 
+                                      "正在预览剪辑效果，播放器将自动跳过标记为删除的片段。\n\n"
+                                      "预览结束后将自动返回编辑界面。", 
+                                      QMessageBox.StandardButton.Ok)
+                print(f"开始预览，跳过 {len(merged_segments)} 个片段")
+            
+        except Exception as e:
+            print(f"预览剪辑效果出错: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+
+    def check_preview_skip(self):
+        """检查是否需要跳过当前播放位置"""
+        if not hasattr(self, 'preview_skip_segments') or not hasattr(self, 'video_player'):
+            return
+        
+        try:
+            # 获取当前位置
+            current_pos = self.video_player.get_position()
+            
+            # 检查是否在需要跳过的片段中
+            for start, end in self.preview_skip_segments:
+                if start <= current_pos < end:
+                    # 跳过这个片段
+                    print(f"跳过片段: {self.format_time(start)} - {self.format_time(end)}")
+                    self.video_player.seek(end)
+                    break
+                
+        except Exception as e:
+            print(f"检查跳过位置出错: {str(e)}")
+
+    def check_preview_ended(self):
+        """检查预览是否结束"""
+        if not hasattr(self, 'video_player'):
+            return
+        
+        try:
+            # 如果视频已停止或播放结束，恢复编辑器
+            if not self.video_player.is_playing():
+                duration = self.video_player.get_duration()
+                position = self.video_player.get_position()
+                
+                # 如果接近结尾或已停止，认为预览结束
+                if position >= duration - 1000 or position == 0:
+                    self.restore_editor_after_preview()
+                
+        except Exception as e:
+            print(f"检查预览结束出错: {str(e)}")
+
+    def restore_editor_after_preview(self):
+        """预览结束后恢复编辑器"""
+        try:
+            # 停止预览相关定时器
+            if hasattr(self, 'preview_timer') and self.preview_timer.isActive():
+                self.preview_timer.stop()
+            
+            if hasattr(self, 'end_check_timer') and self.end_check_timer.isActive():
+                self.end_check_timer.stop()
+            
+            # 重置预览模式标志
+            self.preview_mode = False
+            
+            # 如果编辑器之前是可见的，恢复它
+            if hasattr(self, 'text_editor_dialog_visible') and self.text_editor_dialog_visible:
+                if hasattr(self, 'text_editor_dialog'):
+                    self.text_editor_dialog.show()
+                    print("预览结束，恢复编辑器界面")
+                
+        except Exception as e:
+            print(f"恢复编辑器出错: {str(e)}")
+
+    def export_cut_plan(self):
+        """导出剪辑计划"""
+        if not hasattr(self, 'cut_segments') or not self.cut_segments:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "无剪辑片段", "请先标记要删除的文本片段。", 
+                                   QMessageBox.StandardButton.Ok)
+            return
+        
+        try:
+            from PyQt6.QtWidgets import QFileDialog
+            import json
+            import os
+            
+            # 获取保存路径
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "保存剪辑计划", "", "剪辑计划文件 (*.json);;所有文件 (*)"
+            )
+            
+            if not file_path:
+                return
+            
+            # 准备导出数据
+            export_data = {
+                'video_path': self.media_path,
+                'cut_segments': []
+            }
+            
+            # 构建跳过片段的时间表
+            skip_segments = []
+            for cut in self.cut_segments:
+                skip_segments.append({
+                    'start_time': cut['start_time'],
+                    'end_time': cut['end_time'],
+                    'text': cut['text']
+                })
+            
+            # 按时间排序
+            skip_segments.sort(key=lambda x: x['start_time'])
+            
+            # 合并重叠的片段
+            merged_segments = []
+            for segment in skip_segments:
+                if not merged_segments or segment['start_time'] > merged_segments[-1]['end_time']:
+                    merged_segments.append(segment)
+                else:
+                    merged_segments[-1]['end_time'] = max(merged_segments[-1]['end_time'], segment['end_time'])
+                    merged_segments[-1]['text'] += " " + segment['text']
+            
+            # 计算保留片段 (不是删除片段的部分)
+            if hasattr(self, 'video_player'):
+                total_duration = self.video_player.get_duration()
+            else:
+                # 如果没有视频长度，使用最后一个字幕的结束时间
+                total_duration = max([s['end_time'] for s in self.subtitle_segments]) if self.subtitle_segments else 0
+            
+            keep_segments = []
+            last_end = 0
+            
+            for segment in merged_segments:
+                if segment['start_time'] > last_end:
+                    keep_segments.append({
+                        'start_time': last_end,
+                        'end_time': segment['start_time'],
+                        'keep': True
+                    })
+                
+                # 记录要删除的片段
+                keep_segments.append({
+                    'start_time': segment['start_time'],
+                    'end_time': segment['end_time'],
+                    'keep': False,
+                    'text': segment['text']
+                })
+                
+                last_end = segment['end_time']
+            
+            # 添加最后一个保留片段
+            if last_end < total_duration:
+                keep_segments.append({
+                    'start_time': last_end,
+                    'end_time': total_duration,
+                    'keep': True
+                })
+            
+            # 保存到导出数据
+            export_data['segments'] = keep_segments
+            
+            # 计算剪辑后的总时长
+            total_keep_duration = sum([s['end_time'] - s['start_time'] for s in keep_segments if s.get('keep', False)])
+            export_data['original_duration'] = total_duration
+            export_data['edited_duration'] = total_keep_duration
+            
+            # 写入文件
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+            
+            # 显示成功消息
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "导出成功", 
+                f"剪辑计划已保存到: {os.path.basename(file_path)}\n\n"
+                f"原始时长: {self.format_time(total_duration)}\n"
+                f"剪辑后时长: {self.format_time(total_keep_duration)}\n"
+                f"减少了: {self.format_time(total_duration - total_keep_duration)} ({(total_duration - total_keep_duration) / total_duration * 100:.1f}%)",
+                QMessageBox.StandardButton.Ok
+            )
+            
+            print(f"剪辑计划已导出: {file_path}")
+            
+        except Exception as e:
+            print(f"导出剪辑计划出错: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "导出错误", f"导出剪辑计划失败: {str(e)}", 
+                               QMessageBox.StandardButton.Ok)
