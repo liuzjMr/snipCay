@@ -1,7 +1,7 @@
+# 不打包模型
+funasr_model/
 # 添加通配符忽略所有Python编译文件
 *.py[cod]
 *$py.class
 __pycache__/
 
-# 保留原有的忽略规则
-funasr_model/
