@@ -5,7 +5,7 @@ class ASRTranscribeThread(QThread):
     
     # 定义信号
     progress_signal = pyqtSignal(int, str)  # 进度信号
-    result_signal = pyqtSignal(list)  # 结果信号
+    result_signal = pyqtSignal((list,list))  # 结果信号
     error_signal = pyqtSignal(str)  # 错误信号
     
     def __init__(self, asr_processor, media_path):
@@ -33,7 +33,7 @@ class ASRTranscribeThread(QThread):
             print(f"转录完成，得到 {len(subtitles)} 条字幕")
             
             # 发送字幕结果信号
-            self.result_signal.emit(subtitles)
+            self.result_signal.emit(subtitles,words_timestamps)
             
             # 最终进度
             self.progress_signal.emit(100, "转录完成")

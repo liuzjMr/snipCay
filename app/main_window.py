@@ -22,6 +22,7 @@ class MainWindow(QMainWindow):
         self.current_highlighted_index = -1
         self.subtitle_segments = []  # 存储每个字幕段的开始位置和结束位置
         self.cut_segments = []  # 存储要删除的片段
+        self.words_timestamps = None
         self.setup_ui()
         
     def setup_ui(self):
@@ -439,13 +440,14 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"更新进度出错: {str(e)}")
 
-    def handle_transcribe_result(self, subtitles):
+    def handle_transcribe_result(self, subtitles,words_timestamps):
         """处理转录结果"""
         try:
             # 关闭进度对话框
             if hasattr(self, 'progress_dialog') and self.progress_dialog:
                 self.progress_dialog.close()
             
+            self.words_timestamps = words_timestamps
             # 确保结果是有效的
             if subtitles:
                 print(f"收到转录结果: {len(subtitles)} 条字幕")
@@ -609,7 +611,7 @@ class MainWindow(QMainWindow):
             
             # 创建文本编辑器
             self.transcript_text_edit = QTextEdit()
-            self.transcript_text_edit.setReadOnly(False)
+            self.transcript_text_edit.setReadOnly(True)
             self.transcript_text_edit.setStyleSheet("""
                 QTextEdit {
                     background-color: #1e2430;
@@ -707,41 +709,22 @@ class MainWindow(QMainWindow):
                 return
                 
             # 构建完整的逐字稿文本
-            full_text = ""
-            self.subtitle_segments = []
-            
+            full_text = ""          
             # 添加每个字幕的文本，并记录其位置
-            for subtitle in self.subtitles:
-                text = subtitle.get('text', '').strip()
-                start_time = subtitle.get('start_time', 0)
-                end_time = subtitle.get('end_time', 0)
-                
-                # 记录此字幕在全文中的开始位置
-                start_pos = len(full_text)
-                
-                # 添加文本，确保字幕之间有空格
-                if full_text and not full_text.endswith(' '):
-                    full_text += ' '
-                    
+            for index,word in enumerate(self.words_timestamps):
+
+                text = word['word']
+                start_time =  word['start']
+                end_time =  word['end']
                 full_text += text
                 
-                # 记录结束位置
-                end_pos = len(full_text)
-                
-                # 保存这个字幕段的信息
-                self.subtitle_segments.append({
-                    'start_pos': start_pos,
-                    'end_pos': end_pos,
-                    'start_time': start_time,
-                    'end_time': end_time,
-                    'text': text
-                })
             
             # 设置到文本编辑器
             if hasattr(self, 'transcript_text_edit'):
+                self.transcript_text_edit.clear() 
                 self.transcript_text_edit.setText(full_text)
             
-            print(f"已导入逐字稿，共 {len(self.subtitles)} 个片段")
+            print(f"已导入逐字稿，共 {len(self.words_timestamps)} 个字")
             
         except Exception as e:
             print(f"填充逐字稿数据出错: {str(e)}")
@@ -760,7 +743,13 @@ class MainWindow(QMainWindow):
             selection_start = cursor.selectionStart()
             selection_end = cursor.selectionEnd()
             selected_text = cursor.selectedText()
-            
+            print('选择删除：',selection_start,selection_end,selected_text)
+
+            cut_config = []
+            for i in range(selection_start,selection_end):
+                cut_config.append(self.words_timestamps[i])
+            print(cut_config[0]['start'],cut_config[-1]['end'])
+           
             if not selected_text.strip():
                 return  # 跳过空白选择
                 
