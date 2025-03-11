@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from app.components.video_player import VideoPlayer
 from app.utils.asr_transcribe import ASRTranscribeThread
-from app.components.asr import ASRProcessor
+from app.utils.asr import ASRProcessor
 import os
 
 class MainWindow(QMainWindow):
@@ -827,7 +827,7 @@ class MainWindow(QMainWindow):
         
         try:
             # 切换回字幕标签页
-            self.tab_widget.setCurrentIndex(0)
+            # self.tab_widget.setCurrentIndex(0)
             
             # 构建跳过片段的时间表
             skip_segments = []

@@ -24,15 +24,13 @@ class ASRTranscribeThread(QThread):
             print("开始转录...")
             
             # 执行转录任务 - ASRProcessor 现在直接返回字幕列表
-            subtitles = self.asr_processor.transcribe(self.media_path)
+            subtitles,words_timestamps = self.asr_processor.transcribe(self.media_path)
             
             # 发送进度信号
             self.progress_signal.emit(90, "转录完成，准备渲染...")
             
             # 调试信息
             print(f"转录完成，得到 {len(subtitles)} 条字幕")
-            if subtitles and len(subtitles) > 0:
-                print(f"第一条字幕: {subtitles[0]}")
             
             # 发送字幕结果信号
             self.result_signal.emit(subtitles)
