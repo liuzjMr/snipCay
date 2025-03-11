@@ -20,7 +20,7 @@
 
 ### 系统要求
 
-- Python 3.8 或更高版本
+- Python 3.12
 - 支持的操作系统：Windows、macOS、Linux
 
 ### 安装步骤
@@ -28,11 +28,19 @@
 1. 克隆或下载此仓库
 
 ```bash
-git clone https://github.com/yourusername/subtitlecut.git
-cd subtitlecut
+git clone https://github.com/mobzheng/snipCay.git
+cd snipCay
 ```
+2. 创建并激活虚拟环境（推荐）
 
-2. 安装所需依赖
+```bash
+```
+```bash
+conda create -n snipCay python=3.12
+conda activate snipCay 
+
+```
+3. 安装所需依赖
 
 ```bash
 pip install -r requirements.txt
@@ -62,7 +70,7 @@ python main.py
 
 ### 实现音频转录
 
-在 `app/utils/transcriber.py` 中，您可以集成各种语音识别服务：
+在 `app/utils/transcriber.py` 默认使用中，funasr，您可以集成各种语音识别服务：
 - OpenAI Whisper (推荐用于本地转录)
 - Google Speech-to-Text
 - 其他第三方服务
