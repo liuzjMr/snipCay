@@ -17,9 +17,7 @@ class ASRProcessor:
     def __init__(self):
         """初始化ASR处理器"""
         # 初始化配置
-        self.temp_dir = tempfile.gettempdir()
-        os.makedirs(os.path.join(self.temp_dir, "subtitlecut"), exist_ok=True)
-        
+        self.temp_dir = tempfile.gettempdir()        
         # 设置模型缓存目录
         os.environ["MODELSCOPE_CACHE"] = "funasr_model"
         
@@ -60,29 +58,27 @@ class ASRProcessor:
                 'end_time': end_time,
                 'text': text
             }
-            
             subtitles.append(subtitle)
-        
-        # 解析每个文字的时间戳
-        raw_text = result['raw_text']
-        timestamps = result['timestamp']
-        raw_texts = raw_text.split(' ')
-        # 确保文本和时间戳数量一致
-        if len(raw_texts) != len(timestamps):
-            print(f"警告: 文字数量({len(raw_texts)})与时间戳数量({len(timestamps)})不匹配")
-            # 使用较短的长度
-            length = min(len(raw_texts), len(timestamps))
-            raw_texts = raw_texts[:length]
-            timestamps = timestamps[:length]
-        
-        for (text, ts) in zip(raw_texts, timestamps):
-            # 处理不同格式的时间戳
-            word_timestamp = {
-                "word": text,
-                "start": ts[0],
-                "end": ts[1]
-            }
-            words_timestamps.append(word_timestamp)
+            for t,times in zip(sentence['raw_text'],sentence['timestamp']):
+                if words_timestamps:
+                    last_timestamp = words_timestamps[-1]
+                    last_end = last_timestamp['end']
+                    # 超过100ms，添加一个新的时间戳
+                    if times[0] - last_end > 100:
+                        word_timestamp = {
+                            "word": ' ',
+                            "start": last_timestamp['end'],
+                            "end": times[0]
+                        }
+                        words_timestamps.append(word_timestamp)
+                word_timestamp = {
+                    "word": t,
+                    "start": times[0],
+                    "end": times[1]
+                }
+                words_timestamps.append(word_timestamp)
+
+
         print(f"解析完成，共提取 {len(subtitles)} 条字幕")
         return subtitles, words_timestamps
             
@@ -148,10 +144,3 @@ class ASRProcessor:
         m, s = divmod(s, 60)
         h, m = divmod(m, 60)
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-        
-    def cleanup(self):
-        """清理临时文件"""
-        temp_dir = os.path.join(self.temp_dir, "subtitlecut")
-        for file in os.listdir(temp_dir):
-            if file.startswith("extracted_audio"):
-                os.remove(os.path.join(temp_dir, file))

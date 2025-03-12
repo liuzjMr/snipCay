@@ -1,4 +1,4 @@
-funasr==1.2.5
+funasr==1.2.6
 moviepy==2.1.2
 pydub==0.25.1
 PyQt6==6.8.1

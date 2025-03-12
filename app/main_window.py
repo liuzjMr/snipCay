@@ -10,7 +10,6 @@ from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from app.components.video_player import VideoPlayer
 from app.utils.asr_transcribe import ASRTranscribeThread
 from app.utils.asr import ASRProcessor
-import os
 
 class MainWindow(QMainWindow):
     """主窗口类"""
@@ -338,10 +337,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("请先导入视频文件")
             return
             
-        try:
-            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QProgressBar
-            from PyQt6.QtCore import Qt
-            
+        try:            
             # 创建简单的进度对话框
             self.progress_dialog = QDialog(self)
             self.progress_dialog.setWindowTitle("转录中")
@@ -809,7 +805,6 @@ class MainWindow(QMainWindow):
     def preview_cuts(self):
         """预览剪辑效果"""
         if not hasattr(self, 'cut_segments') or not self.cut_segments:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.information(self, "无剪辑片段", "请先标记要删除的文本片段。", 
                                    QMessageBox.StandardButton.Ok)
             return
@@ -845,7 +840,6 @@ class MainWindow(QMainWindow):
                 
                 # 使用定时器检查是否需要跳过
                 if not hasattr(self, 'preview_timer'):
-                    from PyQt6.QtCore import QTimer
                     self.preview_timer = QTimer()
                     self.preview_timer.setInterval(50)  # 50ms检查一次
                     self.preview_timer.timeout.connect(self.check_preview_skip)
@@ -933,7 +927,6 @@ class MainWindow(QMainWindow):
     def export_cut_plan(self):
         """导出剪辑计划"""
         if not hasattr(self, 'cut_segments') or not self.cut_segments:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.information(self, "无剪辑片段", "请先标记要删除的文本片段。", 
                                    QMessageBox.StandardButton.Ok)
             return
@@ -1040,10 +1033,6 @@ class MainWindow(QMainWindow):
             print(f"剪辑计划已导出: {file_path}")
             
         except Exception as e:
-            print(f"导出剪辑计划出错: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
-            
-            from PyQt6.QtWidgets import QMessageBox
+            print(f"导出剪辑计划出错: {str(e)}")    
             QMessageBox.critical(self, "导出错误", f"导出剪辑计划失败: {str(e)}", 
                                QMessageBox.StandardButton.Ok)
