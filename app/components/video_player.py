@@ -246,19 +246,14 @@ class VideoPlayer(QWidget):
             return self.media_player.isPlaying()
         return False
 
-    def format_time(self, ms):
-        """将毫秒转换为可读时间格式"""
-        seconds = ms // 1000
+    def format_time(self, milliseconds):
+        """格式化时间（毫秒转为时:分:秒.毫秒）"""
+        seconds = milliseconds // 1000
         minutes = seconds // 60
         hours = minutes // 60
+        milliseconds %= 1000
         
-        seconds %= 60
-        minutes %= 60
-        
-        if hours > 0:
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        else:
-            return f"{minutes:02d}:{seconds:02d}"
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
     def handle_playing_changed(self, playing):
         """处理播放状态变化"""
@@ -277,4 +272,4 @@ class VideoPlayer(QWidget):
         """获取视频总时长（毫秒）"""
         if hasattr(self, 'media_player'):
             return self.media_player.duration()
-        return 0 
+        return 0

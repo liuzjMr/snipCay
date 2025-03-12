@@ -50,8 +50,8 @@ class ASRProcessor:
         for i, sentence in enumerate(sentences):
             # 提取每个句子的信息
             text = sentence.get('text', '').strip()
-            start_time = sentence.get('start_time', 0)
-            end_time = sentence.get('end_time', 0)
+            start_time = sentence.get('start', 0)
+            end_time = sentence.get('end', 0)
             subtitle = {
                 'id': i + 1,
                 'start_time': start_time,

@@ -4,10 +4,9 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QPushButton, QListWidget, QLabel, QFileDialog, 
                             QSplitter, QSlider, QTabWidget, QTextEdit, QCheckBox,
-                            QProgressBar, QMessageBox,QDialog)
+                            QProgressBar, QMessageBox,QDialog,QLineEdit)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
-from sympy import im
 from app.components.video_player import VideoPlayer
 from app.utils.asr_transcribe import ASRTranscribeThread
 from app.utils.asr import ASRProcessor
@@ -24,6 +23,7 @@ class MainWindow(QMainWindow):
         self.marked_indices = {}  # 存储被标记的字的下标
         self.words_timestamps = None
         self.asr = None
+        self.asr_loaded = False  # 新增标志位
         self.setup_ui()
         
     def setup_ui(self):
@@ -61,7 +61,6 @@ class MainWindow(QMainWindow):
         self.import_button.setMinimumHeight(40)
         
         self.transcribe_button = QPushButton("转录字幕")
-        self.transcribe_button.setEnabled(False)  # 初始禁用
         self.transcribe_button.clicked.connect(self.transcribe_video)
         self.transcribe_button.setMinimumHeight(40)
         
@@ -79,19 +78,18 @@ class MainWindow(QMainWindow):
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet("""
             QTabWidget::pane {
-                border: 2px solid #1976d2;
+                border: 1px solid #e0e0e0;
                 border-radius: 6px;
-                background-color: #1e2430;
+                background-color: #ffffff;
             }
             QTabBar::tab {
-                background-color: #1a1f2a;
-                color: #e0e0e0;
-                border: 2px solid #1976d2;
+                background-color: #ffffff;
+                color: #666666;
+                border: 1px solid #e0e0e0;
                 border-bottom: none;
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
                 padding: 8px 12px;
-                margin-right: 4px;
             }
             QTabBar::tab:selected {
                 background-color: #1e2430;
@@ -105,6 +103,12 @@ class MainWindow(QMainWindow):
         # 字幕列表标签页
         self.subtitle_tab = QWidget()
         subtitle_tab_layout = QVBoxLayout(self.subtitle_tab)
+        
+        # 添加搜索框
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("输入关键词过滤字幕...")
+        self.search_edit.textChanged.connect(self.update_subtitle_list)
+        subtitle_tab_layout.addWidget(self.search_edit)
         
         subtitle_label = QLabel("字幕列表")
         subtitle_tab_layout.addWidget(subtitle_label)
@@ -135,7 +139,10 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
-        splitter.setSizes([int(self.width() * 0.6), int(self.width() * 0.4)])
+        splitter.setSizes([int(self.width() * 0.7), int(self.width() * 0.3)])
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 1)
+        splitter.splitterMoved.connect(self.handle_splitter_move)
         main_layout.addWidget(splitter)
         
         # 状态栏
@@ -157,6 +164,10 @@ class MainWindow(QMainWindow):
         self.status_label.setText("AI引擎加载中...")
         asr_thread.start()
 
+    def handle_splitter_move(self, pos, index):
+        """处理分割器移动事件"""
+        print(f"分割器位置已调整: {pos}")
+
     def closeEvent(self, event):
         print('正在关闭主窗口...')
         
@@ -177,7 +188,7 @@ class MainWindow(QMainWindow):
         """创建播放控制面板"""
         control_panel = QWidget()
         control_layout = QHBoxLayout(control_panel)
-        control_layout.setContentsMargins(5, 5, 5, 5)
+        control_layout.setContentsMargins(15, 15, 15, 15)
         
         # 播放/暂停按钮
         self.play_button = QPushButton("▶")
@@ -205,114 +216,89 @@ class MainWindow(QMainWindow):
 
     def apply_simple_style(self):
         """应用简单样式，避免语法错误"""
-        # 主窗口样式
-        self.setStyleSheet("QMainWindow { background-color: #121820; color: #e1e1e1; }")
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f5f5f5;
+                color: #333333;
+            }
+            QListWidget {
+                background-color: #ffffff;
+                color: #444444;
+                border: 1px solid #1976d2;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #e0e0e0;
+            }
+            QListWidget::item:selected {
+                background-color: #2196f3;
+                color: white;
+            }
+            QPushButton {
+                background-color: #ffffff;
+                color: #1976d2;
+                border: 1px solid #1976d2;
+                border-radius: 5px;
+                padding: 8px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e3f2fd;
+            }
+        """)
         
-        # 按钮样式
         if hasattr(self, 'import_button') and hasattr(self, 'transcribe_button') and hasattr(self, 'text_edit_button'):
-            button_style = "QPushButton { background-color: #1a1f2a; color: #4fc3f7; border: 2px solid #2196f3; border-radius: 5px; padding: 8px; font-weight: bold; }"
-            self.import_button.setStyleSheet(button_style)
             self.import_button.setText("📂 导入视频")
-            self.transcribe_button.setStyleSheet(button_style)
             self.transcribe_button.setText("🎤 转录字幕")
-            self.text_edit_button.setStyleSheet(button_style)
             self.text_edit_button.setText("✂️ 文本剪辑")
         
-        # 字幕列表样式
-        if hasattr(self, 'subtitle_list'):
-            subtitle_style = "QListWidget { background-color: #1a1f2a; color: #e0e0e0; border: 2px solid #2196f3; border-radius: 5px; }"
-            self.subtitle_list.setStyleSheet(subtitle_style)
-        
-        # 播放控制样式
         if hasattr(self, 'play_button') and hasattr(self, 'stop_button'):
-            control_style = "QPushButton { background-color: #1a1f2a; color: #e1e1e1; border: 2px solid #2196f3; border-radius: 20px; font-weight: bold; }"
-            self.play_button.setStyleSheet(control_style)
-            self.stop_button.setStyleSheet(control_style)
+            self.play_button.setStyleSheet("QPushButton { background-color: #ffffff; color: #1976d2; border: 1px solid #1976d2; border-radius: 5px; font-weight: bold; }")
+            self.stop_button.setStyleSheet("QPushButton { background-color: #ffffff; color: #1976d2; border: 1px solid #1976d2; border-radius: 5px; font-weight: bold; }")
 
     def toggle_playback(self):
         """切换播放/暂停状态"""
-        if hasattr(self, 'video_player'):
-            if self.video_player.is_playing():
-                self.video_player.pause()
-                self.play_button.setText("▶")
-            else:
-                self.video_player.play()
-                self.play_button.setText("⏸")
+        if self.video_player.is_playing():
+            self.video_player.pause()
+            self.play_button.setText("▶")
+        else:
+            self.video_player.play()
+            self.play_button.setText("⏸")
 
     def stop_playback(self):
         """停止播放"""
-        if hasattr(self, 'video_player'):
-            self.video_player.stop()
-            self.play_button.setText("▶")
+        self.video_player.stop()
+        self.play_button.setText("▶")
 
     def seek_video(self, position):
         """跳转到视频指定位置"""
-        if hasattr(self, 'video_player'):
-            duration = self.video_player.get_duration()
-            if duration > 0:
-                seek_position = int(position * duration / 100)
-                self.video_player.seek(seek_position)
+        duration = self.video_player.get_duration()
+        if duration > 0:
+            seek_position = int(position * duration / 100)
+            self.video_player.seek(seek_position)
                 
         
 
     def update_playback_controls(self):
         """更新播放控制状态"""
-        if hasattr(self, 'video_player') and hasattr(self, 'progress_slider'):
-            # 更新进度滑块
-            duration = self.video_player.get_duration()
-            if duration > 0:
-                position = self.video_player.get_position()
-                progress = int(position * 100 / duration)
-                
-                # 阻断信号以避免循环
-                self.progress_slider.blockSignals(True)
-                self.progress_slider.setValue(progress)
-                self.progress_slider.blockSignals(False)
+        # 更新进度滑块
+        duration = self.video_player.get_duration()
+        if duration > 0:
+            position = self.video_player.get_position()
+            progress = int(position * 100 / duration)
             
-            # 更新播放/暂停按钮状态
-            if hasattr(self, 'play_button'):
-                if self.video_player.is_playing():
-                    self.play_button.setText("⏸")
-                else:
-                    self.play_button.setText("▶")
-
-    def _force_update_subtitle(self):
-        """强制更新当前字幕高亮显示"""
-        if not hasattr(self, 'video_player') or not self.video_player:
-            return
+            # 阻断信号以避免循环
+            self.progress_slider.blockSignals(True)
+            self.progress_slider.setValue(progress)
+            self.progress_slider.blockSignals(False)
         
-        if not hasattr(self, 'subtitle_list') or not self.subtitle_list:
-            return
-            
-        if not hasattr(self, 'subtitles') or not self.subtitles:
-            pass  # 临时修复缩进错误
-            return
-            
-        # 获取当前播放位置
-        current_position = self.video_player.get_position()
-        
-        # 查找匹配的字幕
-        matching_index = -1
-        for i, subtitle in enumerate(self.subtitles):
-            start_time = subtitle.get('start_time', 0)
-            end_time = subtitle.get('end_time', 0)
-            
-            if start_time <= current_position <= end_time:
-                matching_index = i
-                break
-                
-        # 如果找到匹配的字幕，且不是当前高亮的字幕，则更新高亮
-        if matching_index >= 0 and matching_index != getattr(self, 'current_highlighted_index', -1):
-            print(f"找到匹配字幕索引: {matching_index}, 文本: {self.subtitles[matching_index].get('text', '')}")
-            
-            # 使用 setCurrentRow 而不是 setItemSelected
-            if matching_index < self.subtitle_list.count():
-                self.subtitle_list.setCurrentRow(matching_index)
-                # 滚动到当前项
-                self.subtitle_list.scrollToItem(self.subtitle_list.item(matching_index))
-                
-                # 更新当前高亮索引
-                self.current_highlighted_index = matching_index
+        # 更新播放/暂停按钮状态
+        if self.video_player.is_playing():
+            self.play_button.setText("⏸")
+        else:
+            self.play_button.setText("▶")
 
     def import_video(self):
         """导入视频文件"""
@@ -333,13 +319,14 @@ class MainWindow(QMainWindow):
             self.update_subtitle_list()
 
     def transcribe_video(self):
+        print('正在执行transcribe_video方法...',self.asr_loaded,self.asr)
         """处理转录按钮点击事件"""
-        if not hasattr(self, 'asr') or self.asr is None:
+        if not self.asr_loaded or self.asr is None:
             QMessageBox.warning(self, "警告", "ASR模型尚未加载完成，请稍后重试")
             return
-        
+
         # 原有代码保持不变
-        if not self.media_path:
+        if not self.media_path:           
             QMessageBox.warning(self, "警告", "请先导入视频文件")
             return
         
@@ -347,141 +334,21 @@ class MainWindow(QMainWindow):
         self.show_progress_dialog("正在转录", "视频正在转录中，请稍候...")
         
         # 启动转录线程
-        QTimer.singleShot(100, self.start_transcription_thread)
+        self.start_transcription_thread()
         
     def onAsrLoaded(self, asr_model):
         """模型加载完成回调"""
         self.asr = asr_model
+        self.asr_loaded = True  # 设置标志位
         if hasattr(self, 'status_label'):
             self.status_label.setText("AI引擎就绪")
         self.transcribe_button.setEnabled(True)
         self.statusBar().showMessage("模型加载完成", 5000)
-        
-    def setup_ui(self):
-        """设置UI布局和组件"""
-        # 创建主布局
-        main_layout = QHBoxLayout()
-        self.central_widget = QWidget()
-        self.central_widget.setLayout(main_layout)
-        self.setCentralWidget(self.central_widget)
-        
-        # 左侧面板 - 视频播放区域
-        left_panel = QWidget()
-        self.left_layout = QVBoxLayout(left_panel)
-        self.left_layout.setContentsMargins(10, 10, 10, 10)
-        self.left_layout.setSpacing(10)
-        
-        # 视频播放器
-        self.video_player = VideoPlayer()
-        self.video_player.setMinimumSize(640, 360)  # 确保视频播放器有足够大的尺寸
-        self.left_layout.addWidget(self.video_player)
-        
-        # 添加播放控制面板
-        self.setup_playback_controls()
-        
-        # 右侧面板 - 字幕和控制按钮
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(10, 10, 10, 10)
-        right_layout.setSpacing(10)
-        
-        # 按钮区域
-        button_layout = QHBoxLayout()
-        self.import_button = QPushButton("导入视频")
-        self.import_button.clicked.connect(self.import_video)
-        self.import_button.setMinimumHeight(40)
-        
-        self.transcribe_button = QPushButton("转录字幕")
-        self.transcribe_button.clicked.connect(self.transcribe_video)
-        self.transcribe_button.setMinimumHeight(40)
-        
-        # 添加文本剪辑按钮
-        self.text_edit_button = QPushButton("按文本剪辑")
-        self.text_edit_button.clicked.connect(self.show_text_editor)
-        self.text_edit_button.setMinimumHeight(40)
-        
-        button_layout.addWidget(self.import_button)
-        button_layout.addWidget(self.transcribe_button)
-        button_layout.addWidget(self.text_edit_button)
-        right_layout.addLayout(button_layout)
-        
-        # 创建标签页控件
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet("""
-            QTabWidget::pane {
-                border: 2px solid #1976d2;
-                border-radius: 6px;
-                background-color: #1e2430;
-            }
-            QTabBar::tab {
-                background-color: #1a1f2a;
-                color: #e0e0e0;
-                border: 2px solid #1976d2;
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                padding: 8px 12px;
-                margin-right: 4px;
-            }
-            QTabBar::tab:selected {
-                background-color: #1e2430;
-                border-bottom: 2px solid #1e2430;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #283447;
-            }
-        """)
-        
-        # 字幕列表标签页
-        self.subtitle_tab = QWidget()
-        subtitle_tab_layout = QVBoxLayout(self.subtitle_tab)
-        
-        subtitle_label = QLabel("字幕列表")
-        subtitle_tab_layout.addWidget(subtitle_label)
-        
-        self.subtitle_list = QListWidget()
-        self.subtitle_list.setMinimumWidth(350)
-        self.subtitle_list.setAlternatingRowColors(True)
-        self.subtitle_list.itemClicked.connect(self.on_subtitle_clicked)
-        subtitle_tab_layout.addWidget(self.subtitle_list, 1)  # 1是伸展因子
-        
-        # 文本剪辑标签页
-        self.text_edit_tab = QWidget()
-        self.text_edit_tab_layout = QVBoxLayout(self.text_edit_tab)
-        
-        text_edit_label = QLabel("文本剪辑 (选中并标记不需要的部分)")
-        self.text_edit_tab_layout.addWidget(text_edit_label)
-        
-        # 这里先不添加内容，在show_text_editor方法中动态创建
-        
-        # 添加标签页到标签页控件
-        self.tab_widget.addTab(self.subtitle_tab, "字幕列表")
-        self.tab_widget.addTab(self.text_edit_tab, "文本剪辑")
-        
-        # 添加标签页控件到右侧面板
-        right_layout.addWidget(self.tab_widget, 1)  # 1是伸展因子
-        
-        # 将左右面板添加到主布局
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(left_panel)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([int(self.width() * 0.6), int(self.width() * 0.4)])
-        main_layout.addWidget(splitter)
-        
-        # 状态栏
-        self.statusBar().showMessage("准备就绪")
-        
-        # 设置窗口属性
-        self.setWindowTitle("视频字幕转录工具")
-        self.resize(1200, 700)
-        
-        # 应用简单样式
-        self.apply_simple_style()
-    
-        asr_thread = ModelLoadThread()
-        self.asr_thread = asr_thread  # 保存为实例变量
-        asr_thread.model_loaded_signal.connect(self.onAsrLoaded)
-        asr_thread.start()
+      
+
+    def handle_splitter_move(self, pos, index):
+        """处理分割器移动事件"""
+        print(f"分割器位置已调整: {pos}")
 
     def closeEvent(self, event):
         print('正在关闭主窗口...')
@@ -503,7 +370,7 @@ class MainWindow(QMainWindow):
         """创建播放控制面板"""
         control_panel = QWidget()
         control_layout = QHBoxLayout(control_panel)
-        control_layout.setContentsMargins(5, 5, 5, 5)
+        control_layout.setContentsMargins(15, 15, 15, 15)
         
         # 播放/暂停按钮
         self.play_button = QPushButton("▶")
@@ -531,45 +398,61 @@ class MainWindow(QMainWindow):
 
     def apply_simple_style(self):
         """应用简单样式，避免语法错误"""
-        # 主窗口样式
-        self.setStyleSheet("QMainWindow { background-color: #121820; color: #e1e1e1; }")
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f5f5f5;
+                color: #333333;
+            }
+            QListWidget {
+                background-color: #ffffff;
+                color: #444444;
+                border: 1px solid #1976d2;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #e0e0e0;
+            }
+            QListWidget::item:selected {
+                background-color: #2196f3;
+                color: white;
+            }
+            QPushButton {
+                background-color: #ffffff;
+                color: #1976d2;
+                border: 1px solid #1976d2;
+                border-radius: 5px;
+                padding: 8px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e3f2fd;
+            }
+        """)
         
-        # 按钮样式
         if hasattr(self, 'import_button') and hasattr(self, 'transcribe_button') and hasattr(self, 'text_edit_button'):
-            button_style = "QPushButton { background-color: #1a1f2a; color: #4fc3f7; border: 2px solid #2196f3; border-radius: 5px; padding: 8px; font-weight: bold; }"
-            self.import_button.setStyleSheet(button_style)
             self.import_button.setText("📂 导入视频")
-            self.transcribe_button.setStyleSheet(button_style)
             self.transcribe_button.setText("🎤 转录字幕")
-            self.text_edit_button.setStyleSheet(button_style)
             self.text_edit_button.setText("✂️ 文本剪辑")
         
-        # 字幕列表样式
-        if hasattr(self, 'subtitle_list'):
-            subtitle_style = "QListWidget { background-color: #1a1f2a; color: #e0e0e0; border: 2px solid #2196f3; border-radius: 5px; }"
-            self.subtitle_list.setStyleSheet(subtitle_style)
-        
-        # 播放控制样式
         if hasattr(self, 'play_button') and hasattr(self, 'stop_button'):
-            control_style = "QPushButton { background-color: #1a1f2a; color: #e1e1e1; border: 2px solid #2196f3; border-radius: 20px; font-weight: bold; }"
-            self.play_button.setStyleSheet(control_style)
-            self.stop_button.setStyleSheet(control_style)
+            self.play_button.setStyleSheet("QPushButton { background-color: #ffffff; color: #1976d2; border: 1px solid #1976d2; border-radius: 5px; font-weight: bold; }")
+            self.stop_button.setStyleSheet("QPushButton { background-color: #ffffff; color: #1976d2; border: 1px solid #1976d2; border-radius: 5px; font-weight: bold; }")
 
     def toggle_playback(self):
         """切换播放/暂停状态"""
-        if hasattr(self, 'video_player'):
-            if self.video_player.is_playing():
-                self.video_player.pause()
-                self.play_button.setText("▶")
-            else:
-                self.video_player.play()
-                self.play_button.setText("⏸")
+        if self.video_player.is_playing():
+            self.video_player.pause()
+            self.play_button.setText("▶")
+        else:
+            self.video_player.play()
+            self.play_button.setText("⏸")
 
     def stop_playback(self):
         """停止播放"""
-        if hasattr(self, 'video_player'):
-            self.video_player.stop()
-            self.play_button.setText("▶")
+        self.video_player.stop()
+        self.play_button.setText("▶")
 
     def seek_video(self, position):
         """跳转到视频指定位置"""
@@ -578,7 +461,6 @@ class MainWindow(QMainWindow):
             if duration > 0:
                 seek_position = int(position * duration / 100)
                 self.video_player.seek(seek_position)
-
                 
         
 
@@ -603,43 +485,6 @@ class MainWindow(QMainWindow):
                 else:
                     self.play_button.setText("▶")
 
-    def _force_update_subtitle(self):
-        """强制更新当前字幕高亮显示"""
-        if not hasattr(self, 'video_player') or not self.video_player:
-            return
-        
-        if not hasattr(self, 'subtitle_list') or not self.subtitle_list:
-            return
-            
-        if not hasattr(self, 'subtitles') or not self.subtitles:
-            pass  # 临时修复缩进错误
-            return
-            
-        # 获取当前播放位置
-        current_position = self.video_player.get_position()
-        
-        # 查找匹配的字幕
-        matching_index = -1
-        for i, subtitle in enumerate(self.subtitles):
-            start_time = subtitle.get('start_time', 0)
-            end_time = subtitle.get('end_time', 0)
-            
-            if start_time <= current_position <= end_time:
-                matching_index = i
-                break
-                
-        # 如果找到匹配的字幕，且不是当前高亮的字幕，则更新高亮
-        if matching_index >= 0 and matching_index != getattr(self, 'current_highlighted_index', -1):
-            print(f"找到匹配字幕索引: {matching_index}, 文本: {self.subtitles[matching_index].get('text', '')}")
-            
-            # 使用 setCurrentRow 而不是 setItemSelected
-            if matching_index < self.subtitle_list.count():
-                self.subtitle_list.setCurrentRow(matching_index)
-                # 滚动到当前项
-                self.subtitle_list.scrollToItem(self.subtitle_list.item(matching_index))
-                
-                # 更新当前高亮索引
-                self.current_highlighted_index = matching_index
 
     def import_video(self):
         """导入视频文件"""
@@ -659,54 +504,172 @@ class MainWindow(QMainWindow):
             self.subtitles = None
             self.update_subtitle_list()
 
-    def transcribe_video(self):
-        """转录视频字幕"""
-        if not self.media_path:
-            self.statusBar().showMessage("请先导入视频文件")
-            return
-        # 创建简单的进度对话框
-        self.progress_dialog = QDialog(self)
-        self.progress_dialog.setWindowTitle("转录中")
-        self.progress_dialog.setMinimumWidth(300)
-        self.progress_dialog.setMinimumHeight(150)
-        self.progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
-        self.progress_dialog.setStyleSheet("QDialog { background-color: #121820; }")
+    def onAsrLoaded(self, asr_model):
+        """模型加载完成回调"""
+        self.asr = asr_model
+        self.asr_loaded = True  # 设置标志位
+        if hasattr(self, 'status_label'):
+            self.status_label.setText("AI引擎就绪")
+        self.statusBar().showMessage("模型加载完成", 5000)
+      
+
+    def handle_splitter_move(self, pos, index):
+        """处理分割器移动事件"""
+        print(f"分割器位置已调整: {pos}")
+
+    def closeEvent(self, event):
+        print('正在关闭主窗口...')
         
-        # 设置布局
-        layout = QVBoxLayout(self.progress_dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-        
-        # 添加标签
-        label = QLabel("正在准备转录...", self.progress_dialog)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet("font-size: 14px; color: #e1e1e1; margin-bottom: 20px;")
-        layout.addWidget(label)
-        self.progress_label = label
-        
-        # 添加无限循环的进度条
-        progress_bar = QProgressBar(self.progress_dialog)
-        progress_bar.setMinimum(0)
-        progress_bar.setMaximum(0)  # 无限循环模式
-        progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 2px solid #2196f3;
-                border-radius: 5px;
-                background-color: #1a1f2a;
-                height: 25px;
-                text-align: center;
-            }
+        # 安全停止模型加载线程
+        if hasattr(self, 'asr_thread') and isinstance(self.asr_thread, ModelLoadThread):
+            print(f'模型加载线程状态: 运行中={self.asr_thread.isRunning()}')
+            self.asr_thread.stop()
             
-            QProgressBar::chunk {
+        # 安全停止转录线程（如果存在）
+        if hasattr(self, 'transcribe_thread') and isinstance(self.transcribe_thread, ASRTranscribeThread):
+            print(f'转录线程状态: 运行中={self.transcribe_thread.isRunning()}')
+            self.transcribe_thread.stop()
+            
+        event.accept()
+        print('窗口关闭完成')
+
+    def setup_playback_controls(self):
+        """创建播放控制面板"""
+        control_panel = QWidget()
+        control_layout = QHBoxLayout(control_panel)
+        control_layout.setContentsMargins(15, 15, 15, 15)
+        
+        # 播放/暂停按钮
+        self.play_button = QPushButton("▶")
+        self.play_button.setToolTip("播放/暂停")
+        self.play_button.clicked.connect(self.toggle_playback)
+        self.play_button.setFixedSize(50, 50)
+        
+        # 停止按钮
+        self.stop_button = QPushButton("■")
+        self.stop_button.setToolTip("停止")
+        self.stop_button.clicked.connect(self.stop_playback)
+        self.stop_button.setFixedSize(50, 50)
+        
+        # 进度滑块
+        self.progress_slider = QSlider(Qt.Orientation.Horizontal)
+        self.progress_slider.setRange(0, 100)
+        self.progress_slider.sliderMoved.connect(self.seek_video)
+        
+        # 添加到布局
+        control_layout.addWidget(self.play_button)
+        control_layout.addWidget(self.stop_button)
+        control_layout.addWidget(self.progress_slider)
+        
+        self.left_layout.addWidget(control_panel)
+
+    def apply_simple_style(self):
+        """应用简单样式，避免语法错误"""
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f5f5f5;
+                color: #333333;
+            }
+            QListWidget {
+                background-color: #ffffff;
+                color: #444444;
+                border: 1px solid #1976d2;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #e0e0e0;
+            }
+            QListWidget::item:selected {
                 background-color: #2196f3;
-                width: 10px;
+                color: white;
+            }
+            QPushButton {
+                background-color: #ffffff;
+                color: #1976d2;
+                border: 1px solid #1976d2;
+                border-radius: 5px;
+                padding: 8px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e3f2fd;
             }
         """)
-        layout.addWidget(progress_bar)
         
-        # 立即显示对话框
-        self.progress_dialog.setAutoFillBackground(True)
-        self.progress_dialog.show()
-        self.start_transcription_thread()
+        if hasattr(self, 'import_button') and hasattr(self, 'transcribe_button') and hasattr(self, 'text_edit_button'):
+            self.import_button.setText("📂 导入视频")
+            self.transcribe_button.setText("🎤 转录字幕")
+            self.text_edit_button.setText("✂️ 文本剪辑")
+        
+        if hasattr(self, 'play_button') and hasattr(self, 'stop_button'):
+            self.play_button.setStyleSheet("QPushButton { background-color: #ffffff; color: #1976d2; border: 1px solid #1976d2; border-radius: 5px; font-weight: bold; }")
+            self.stop_button.setStyleSheet("QPushButton { background-color: #ffffff; color: #1976d2; border: 1px solid #1976d2; border-radius: 5px; font-weight: bold; }")
+
+    def toggle_playback(self):
+        """切换播放/暂停状态"""
+        if self.video_player.is_playing():
+            self.video_player.pause()
+            self.play_button.setText("▶")
+        else:
+            self.video_player.play()
+            self.play_button.setText("⏸")
+
+    def stop_playback(self):
+        """停止播放"""
+        self.video_player.stop()
+        self.play_button.setText("▶")
+
+    def seek_video(self, position):
+        """跳转到视频指定位置"""
+        if hasattr(self, 'video_player'):
+            duration = self.video_player.get_duration()
+            if duration > 0:
+                seek_position = int(position * duration / 100)
+                self.video_player.seek(seek_position)
+                
+        
+
+    def update_playback_controls(self):
+        """更新播放控制状态"""
+        if hasattr(self, 'video_player') and hasattr(self, 'progress_slider'):
+            # 更新进度滑块
+            duration = self.video_player.get_duration()
+            if duration > 0:
+                position = self.video_player.get_position()
+                progress = int(position * 100 / duration)
+                
+                # 阻断信号以避免循环
+                self.progress_slider.blockSignals(True)
+                self.progress_slider.setValue(progress)
+                self.progress_slider.blockSignals(False)
+            
+            # 更新播放/暂停按钮状态
+            if hasattr(self, 'play_button'):
+                if self.video_player.is_playing():
+                    self.play_button.setText("⏸")
+                else:
+                    self.play_button.setText("▶")
+
+
+    def import_video(self):
+        """导入视频文件"""
+        file_dialog = QFileDialog()
+        file_path, _ = file_dialog.getOpenFileName(
+            self, "选择视频文件", "", "视频文件 (*.mp4 *.avi *.mkv *.mov *.wmv)"
+        )
+        
+        if file_path:
+            print(f"尝试导入视频: {file_path}")
+            self.media_path = file_path
+            self.video_player.load_media(file_path)
+            self.statusBar().showMessage(f"已加载视频: {file_path}")
+            print(f"成功导入视频: {file_path}")
+            
+            # 清空字幕
+            self.subtitles = None
+            self.update_subtitle_list()
 
     def start_transcription_thread(self):
         """启动转录线程（在对话框显示后调用）"""
@@ -772,13 +735,16 @@ class MainWindow(QMainWindow):
             
         # 添加字幕项
         for subtitle in self.subtitles:
+            print(f"字幕: {subtitle}")
             text = subtitle.get('text', '')
-            start_time = subtitle.get('start_time', 0)
-            end_time = subtitle.get('end_time', 0)
+            start_time = subtitle.get('start', 0)
+            end_time = subtitle.get('end', 0)
             
             # 格式化时间
             start_str = self.format_time(start_time)
             end_str = self.format_time(end_time)
+            print(f"添加字幕: {text} ({start_str}-{end_str})")
+            print(f"字幕: {text} ({start_time}-{end_time})")
             
             # 设置显示文本
             display_text = f"{text} ({start_str}-{end_str})"
@@ -793,24 +759,19 @@ class MainWindow(QMainWindow):
         index = self.subtitle_list.row(item)
         if index >= 0 and index < len(self.subtitles):
             start_time = self.subtitles[index].get('start_time', 0)
-            if hasattr(self, 'video_player'):
+            if hasattr(self, 'video_player') and self.video_player.has_media():
                 self.video_player.seek(start_time)
                 self.video_player.play()
                 print(f"跳转到字幕时间点: {start_time}ms")
 
     def format_time(self, milliseconds):
-        """格式化时间（毫秒转为时:分:秒）"""
+        """格式化时间（毫秒转为时:分:秒.毫秒）"""
         seconds = milliseconds // 1000
         minutes = seconds // 60
         hours = minutes // 60
+        milliseconds %= 1000
         
-        seconds %= 60
-        minutes %= 60
-        
-        if hours > 0:
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        else:
-            return f"{minutes:02d}:{seconds:02d}"
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
     
 
     def show_text_editor(self):
@@ -1175,6 +1136,24 @@ class MainWindow(QMainWindow):
         
         print(f"剪辑计划已导出: {file_path}")
 
+    def show_progress_dialog(self, title, message):
+            """显示进度对话框"""
+            self.progress_dialog = QDialog(self)
+            self.progress_dialog.setWindowTitle(title)
+            self.progress_dialog.setFixedSize(300, 100)
+            
+            layout = QVBoxLayout()
+            self.progress_label = QLabel(message)
+            self.progress_bar = QProgressBar()
+            self.progress_bar.setRange(0, 0)  # 不确定进度模式
+            
+            layout.addWidget(self.progress_label)
+            layout.addWidget(self.progress_bar)
+            self.progress_dialog.setLayout(layout)
+            self.progress_dialog.show()
+
+
+            
     def show_context_menu(self, pos):
         """显示右键菜单"""
         cursor = self.transcript_text_edit.textCursor()
@@ -1193,301 +1172,4 @@ class MainWindow(QMainWindow):
         if has_marked:
             # 创建右键菜单
             menu = self.transcript_text_edit.createStandardContextMenu()
-            menu.addSeparator()
-            
-            # 添加恢复选项
-            restore_action = menu.addAction("恢复选中文本")
-            restore_action.triggered.connect(self.restore_marked_text)
-            
-            # 在鼠标位置显示菜单
-            menu.exec(self.transcript_text_edit.mapToGlobal(pos))
-
-    def restore_marked_text(self):
-        """恢复已标记的文本"""
-        cursor = self.transcript_text_edit.textCursor()
-        if not cursor.hasSelection():
-            return
-
-        selection_start = cursor.selectionStart()
-        selection_end = cursor.selectionEnd()
-
-        # 移除标记格式
-        format = QTextCharFormat()
-        format.setFontStrikeOut(False)  # 移除删除线
-        format.setForeground(QColor(224, 224, 224))  # 恢复原始颜色
-
-        # 从标记集合中移除
-        for i in range(selection_start, selection_end):
-            if i in self.marked_indices:
-                del self.marked_indices[i]
-
-        # 应用格式
-        cursor.setPosition(selection_start)
-        cursor.setPosition(selection_end, QTextCursor.MoveMode.KeepAnchor)
-        cursor.setCharFormat(format)
-
-        self.statusBar().showMessage("已恢复选中文本")
-
-    def onAsrLoaded(self, asr_model):
-        """模型加载完成回调"""
-        self.asr = asr_model
-        if hasattr(self, 'status_label'):
-            self.status_label.setText("AI引擎就绪")
-        self.transcribe_button.setEnabled(True)
-        self.statusBar().showMessage("模型加载完成", 5000)
-        
-    def setup_ui(self):
-        """设置UI布局和组件"""
-        # 创建主布局
-        main_layout = QHBoxLayout()
-        self.central_widget = QWidget()
-        self.central_widget.setLayout(main_layout)
-        self.setCentralWidget(self.central_widget)
-        
-        # 左侧面板 - 视频播放区域
-        left_panel = QWidget()
-        self.left_layout = QVBoxLayout(left_panel)
-        self.left_layout.setContentsMargins(10, 10, 10, 10)
-        self.left_layout.setSpacing(10)
-        
-        # 视频播放器
-        self.video_player = VideoPlayer()
-        self.video_player.setMinimumSize(640, 360)  # 确保视频播放器有足够大的尺寸
-        self.left_layout.addWidget(self.video_player)
-        
-        # 添加播放控制面板
-        self.setup_playback_controls()
-        
-        # 右侧面板 - 字幕和控制按钮
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(10, 10, 10, 10)
-        right_layout.setSpacing(10)
-        
-        # 按钮区域
-        button_layout = QHBoxLayout()
-        self.import_button = QPushButton("导入视频")
-        self.import_button.clicked.connect(self.import_video)
-        self.import_button.setMinimumHeight(40)
-        
-        self.transcribe_button = QPushButton("转录字幕")
-        self.transcribe_button.clicked.connect(self.transcribe_video)
-        self.transcribe_button.setMinimumHeight(40)
-        
-        # 添加文本剪辑按钮
-        self.text_edit_button = QPushButton("按文本剪辑")
-        self.text_edit_button.clicked.connect(self.show_text_editor)
-        self.text_edit_button.setMinimumHeight(40)
-        
-        button_layout.addWidget(self.import_button)
-        button_layout.addWidget(self.transcribe_button)
-        button_layout.addWidget(self.text_edit_button)
-        right_layout.addLayout(button_layout)
-        
-        # 创建标签页控件
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet("""
-            QTabWidget::pane {
-                border: 2px solid #1976d2;
-                border-radius: 6px;
-                background-color: #1e2430;
-            }
-            QTabBar::tab {
-                background-color: #1a1f2a;
-                color: #e0e0e0;
-                border: 2px solid #1976d2;
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                padding: 8px 12px;
-                margin-right: 4px;
-            }
-            QTabBar::tab:selected {
-                background-color: #1e2430;
-                border-bottom: 2px solid #1e2430;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #283447;
-            }
-        """)
-        
-        # 字幕列表标签页
-        self.subtitle_tab = QWidget()
-        subtitle_tab_layout = QVBoxLayout(self.subtitle_tab)
-        
-        subtitle_label = QLabel("字幕列表")
-        subtitle_tab_layout.addWidget(subtitle_label)
-        
-        self.subtitle_list = QListWidget()
-        self.subtitle_list.setMinimumWidth(350)
-        self.subtitle_list.setAlternatingRowColors(True)
-        self.subtitle_list.itemClicked.connect(self.on_subtitle_clicked)
-        subtitle_tab_layout.addWidget(self.subtitle_list, 1)  # 1是伸展因子
-        
-        # 文本剪辑标签页
-        self.text_edit_tab = QWidget()
-        self.text_edit_tab_layout = QVBoxLayout(self.text_edit_tab)
-        
-        text_edit_label = QLabel("文本剪辑 (选中并标记不需要的部分)")
-        self.text_edit_tab_layout.addWidget(text_edit_label)
-        
-        # 这里先不添加内容，在show_text_editor方法中动态创建
-        
-        # 添加标签页到标签页控件
-        self.tab_widget.addTab(self.subtitle_tab, "字幕列表")
-        self.tab_widget.addTab(self.text_edit_tab, "文本剪辑")
-        
-        # 添加标签页控件到右侧面板
-        right_layout.addWidget(self.tab_widget, 1)  # 1是伸展因子
-        
-        # 将左右面板添加到主布局
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(left_panel)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([int(self.width() * 0.6), int(self.width() * 0.4)])
-        main_layout.addWidget(splitter)
-        
-        # 状态栏
-        self.statusBar().showMessage("准备就绪")
-        
-        # 设置窗口属性
-        self.setWindowTitle("视频字幕转录工具")
-        self.resize(1200, 700)
-        
-        # 应用简单样式
-        self.apply_simple_style()
-
-        asr_thread = ModelLoadThread()
-        self.asr_thread = asr_thread  # 保存为实例变量
-        asr_thread.model_loaded_signal.connect(self.onAsrLoaded)
-        asr_thread.start()
-
-    def closeEvent(self, event):
-        print('正在关闭主窗口...')
-        
-        # 安全停止模型加载线程
-        if hasattr(self, 'asr_thread') and isinstance(self.asr_thread, ModelLoadThread):
-            print(f'模型加载线程状态: 运行中={self.asr_thread.isRunning()}')
-            self.asr_thread.stop()
-            
-        # 安全停止转录线程（如果存在）
-        if hasattr(self, 'transcribe_thread') and isinstance(self.transcribe_thread, ASRTranscribeThread):
-            print(f'转录线程状态: 运行中={self.transcribe_thread.isRunning()}')
-            self.transcribe_thread.stop()
-            
-        event.accept()
-        print('窗口关闭完成')
-
-    def setup_playback_controls(self):
-        """创建播放控制面板"""
-        control_panel = QWidget()
-        control_layout = QHBoxLayout(control_panel)
-        control_layout.setContentsMargins(5, 5, 5, 5)
-        
-        # 播放/暂停按钮
-        self.play_button = QPushButton("▶")
-        self.play_button.setToolTip("播放/暂停")
-        self.play_button.clicked.connect(self.toggle_playback)
-        self.play_button.setFixedSize(50, 50)
-        
-        # 停止按钮
-        self.stop_button = QPushButton("■")
-        self.stop_button.setToolTip("停止")
-        self.stop_button.clicked.connect(self.stop_playback)
-        self.stop_button.setFixedSize(50, 50)
-        
-        # 进度滑块
-        self.progress_slider = QSlider(Qt.Orientation.Horizontal)
-        self.progress_slider.setRange(0, 100)
-        self.progress_slider.sliderMoved.connect(self.seek_video)
-        
-        # 添加到布局
-        control_layout.addWidget(self.play_button)
-        control_layout.addWidget(self.stop_button)
-        control_layout.addWidget(self.progress_slider)
-        
-        self.left_layout.addWidget(control_panel)
-
-    def apply_simple_style(self):
-        """应用简单样式，避免语法错误"""
-        # 主窗口样式
-        self.setStyleSheet("QMainWindow { background-color: #121820; color: #e1e1e1; }")
-        
-        # 按钮样式
-        if hasattr(self, 'import_button') and hasattr(self, 'transcribe_button') and hasattr(self, 'text_edit_button'):
-            button_style = "QPushButton { background-color: #1a1f2a; color: #4fc3f7; border: 2px solid #2196f3; border-radius: 5px; padding: 8px; font-weight: bold; }"
-            self.import_button.setStyleSheet(button_style)
-            self.import_button.setText("📂 导入视频")
-            self.transcribe_button.setStyleSheet(button_style)
-            self.transcribe_button.setText("🎤 转录字幕")
-            self.text_edit_button.setStyleSheet(button_style)
-            self.text_edit_button.setText("✂️ 文本剪辑")
-        
-        # 字幕列表样式
-        if hasattr(self, 'subtitle_list'):
-            subtitle_style = "QListWidget { background-color: #1a1f2a; color: #e0e0e0; border: 2px solid #2196f3; border-radius: 5px; }"
-            self.subtitle_list.setStyleSheet(subtitle_style)
-        
-        # 播放控制样式
-        if hasattr(self, 'play_button') and hasattr(self, 'stop_button'):
-            control_style = "QPushButton { background-color: #1a1f2a; color: #e1e1e1; border: 2px solid #2196f3; border-radius: 20px; font-weight: bold; }"
-            self.play_button.setStyleSheet(control_style)
-            self.stop_button.setStyleSheet(control_style)
-
-    def toggle_playback(self):
-        """切换播放/暂停状态"""
-        if hasattr(self, 'video_player'):
-            if self.video_player.is_playing():
-                self.video_player.pause()
-                self.play_button.setText("▶")
-            else:
-                self.video_player.play()
-                self.play_button.setText("⏸")
-
-    def stop_playback(self):
-        """停止播放"""
-        if hasattr(self, 'video_player'):
-            self.video_player.stop()
-            self.play_button.setText("▶")
-
-    def seek_video(self, position):
-        """跳转到视频指定位置"""
-        if hasattr(self, 'video_player'):
-            duration = self.video_player.get_duration()
-            if duration > 0:
-                seek_position = int(position * duration / 100)
-                self.video_player.seek(seek_position)
-
-        
-
-    def update_playback_controls(self):
-        """更新播放控制状态"""
-        if hasattr(self, 'video_player') and hasattr(self, 'progress_slider'):
-            # 更新进度滑块
-            duration = self.video_player.get_duration()
-            if duration > 0:
-                position = self.video_player.get_position()
-                progress = int(position * 100 / duration)
-                
-                # 阻断信号以避免循环
-                self.progress_slider.blockSignals(True)
-                self.progress_slider.setValue(progress)
-                self.progress_slider.blockSignals(False)
-            
-            # 更新播放/暂停按钮状态
-            if hasattr(self, 'play_button'):
-                if self.video_player.is_playing():
-                    self.play_button.setText("⏸")
-                else:
-                    self.play_button.setText("▶")
-
-    def _force_update_subtitle(self):
-        """强制更新当前字幕高亮显示"""
-        if not hasattr(self, 'video_player') or not self.video_player:
-            return
-        
-        if not hasattr(self, 'subtitle_list') or not self.subtitle_list:
-            return
-            
-        if not hasattr(self, 'subtitles') or not self.subtitles:
-            pass  # 临时修复缩进错误
+            menu.addSeparator
