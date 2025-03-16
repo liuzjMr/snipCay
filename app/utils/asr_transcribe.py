@@ -1,4 +1,5 @@
 from PyQt6.QtCore import QThread, pyqtSignal
+from ..utils.logger import logger
 
 class ASRTranscribeThread(QThread):
     """ASR转录线程"""
@@ -21,7 +22,7 @@ class ASRTranscribeThread(QThread):
             self.progress_signal.emit(10, "准备转录...")
             
             # 执行转录 - 获取格式化的字幕列表
-            print("开始转录...")
+            logger.info("开始转录...")
             
             # 执行转录任务 - ASRProcessor 现在直接返回字幕列表
             subtitles,words_timestamps = self.asr_processor.transcribe(self.media_path)
@@ -30,7 +31,7 @@ class ASRTranscribeThread(QThread):
             self.progress_signal.emit(90, "转录完成，准备渲染...")
             
             # 调试信息
-            print(f"转录完成，得到 {len(subtitles)} 条字幕")
+            logger.info(f"转录完成，得到 {len(subtitles)} 条字幕")
             
             # 发送字幕结果信号
             self.result_signal.emit(subtitles,words_timestamps)
@@ -42,4 +43,5 @@ class ASRTranscribeThread(QThread):
             # 发送错误信号
             import traceback
             error_details = traceback.format_exc()
-            self.error_signal.emit(f"转录失败: {str(e)}\n\n{error_details}") 
+            logger.error(f"转录失败: {str(e)}\n\n{error_details}")
+            self.error_signal.emit(f"转录失败: {str(e)}\n\n{error_details}")

@@ -3,50 +3,50 @@
 
 import os
 import tempfile
-import time
-from pathlib import Path
-import wave
-import json
-from datetime import datetime
 import torch
 from funasr import AutoModel
+from pathlib import Path
+from ..config import Config
+from ..utils.logger import logger
+from ..utils.event_bus import event_bus
 
-class ASRProcessor:
-    """语音识别处理类 - 基于FunASR的自动语音识别"""
+class ASRService:
+    """语音识别服务 - 基于FunASR的自动语音识别"""
     
     def __init__(self):
-        """初始化ASR处理器"""
+        """初始化ASR服务"""
         # 初始化配置
-        self.temp_dir = tempfile.gettempdir()        
+        self.temp_dir = tempfile.gettempdir()
+        
         # 设置模型缓存目录
-        os.environ["MODELSCOPE_CACHE"] = "funasr_model"
+        os.environ["MODELSCOPE_CACHE"] = Config.MODEL_CACHE_DIR
         
         # 初始化FunASR模型
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"使用设备: {device}")
+        logger.info(f"使用设备: {device}")
         
-        self.model = AutoModel(model="iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-                  vad_model="damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-                  punc_model="damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
-                  spk_model="damo/speech_campplus_sv_zh-cn_16k-common",
-                  device=device
-                  # spk_model="cam++", spk_model_revision="v2.0.2",
-                  )
-        print("ASR模型已加载")
+        self.model = AutoModel(
+            model=Config.ASR_MODEL["model"],
+            vad_model=Config.ASR_MODEL["vad_model"],
+            punc_model=Config.ASR_MODEL["punc_model"],
+            spk_model=Config.ASR_MODEL["spk_model"],
+            device=device
+        )
+        logger.info("ASR模型已加载")
+        event_bus.publish('asr_model_loaded',self)
         
-   
     def process_funasr_result(self, result):
         """处理FunASR识别结果，解析为字幕列表和文字时间戳"""
-        print("===== 开始解析FunASR结果 =====")
+        logger.info("===== 开始解析FunASR结果 =====")
         
         subtitles = []
         words_timestamps = []
         
-        
         result = result[0]  # 使用列表中的第一个字典
         # 查找sentence_info字段（包含句子级别的识别结果）
         sentences = result['sentence_info']
-        print(f"找到 sentence_info，包含 {len(sentences)} 条句子信息")
+        logger.info(f"找到 sentence_info，包含 {len(sentences)} 条句子信息")
+        
         for i, sentence in enumerate(sentences):
             # 提取每个句子的信息
             text = sentence.get('text', '').strip()
@@ -59,7 +59,15 @@ class ASRProcessor:
                 'text': text
             }
             subtitles.append(subtitle)
-            for t,times in zip(sentence['raw_text'],sentence['timestamp']):
+            
+            # 发布字幕进度事件
+            progress = (i + 1) / len(sentences)
+            event_bus.publish('asr_progress', {
+                'progress': progress,
+                'current_subtitle': subtitle
+            })
+            
+            for t, times in zip(sentence['raw_text'], sentence['timestamp']):
                 if words_timestamps:
                     last_timestamp = words_timestamps[-1]
                     last_end = last_timestamp['end']
@@ -78,11 +86,9 @@ class ASRProcessor:
                 }
                 words_timestamps.append(word_timestamp)
 
-
-        print(f"解析完成，共提取 {len(subtitles)} 条字幕")
+        logger.info(f"解析完成，共提取 {len(subtitles)} 条字幕")
         return subtitles, words_timestamps
             
-    
     def transcribe(self, media_path):
         """转录语音为字幕"""
         try:
@@ -90,43 +96,57 @@ class ASRProcessor:
             if not os.path.exists(media_path):
                 raise FileNotFoundError(f"媒体文件不存在: {media_path}")
             
-            print("开始转录...")
+            logger.info("开始转录...")
+            event_bus.publish('asr_start', {'media_path': media_path})
             
-            # 调用FunASR进行识别 - 注意使用self.model
-            result = self.model.generate(input=media_path,
-                     batch_size_s=300,
-                     return_spk_res=True,
-                     return_raw_text=True,
-                     is_final=True,
-                     hotword='魔搭')
+            # 调用FunASR进行识别
+            result = self.model.generate(
+                input=media_path,
+                batch_size_s=300,
+                return_spk_res=True,
+                return_raw_text=True,
+                is_final=True,
+                hotword='魔搭'
+            )
             
             # 保存原始结果（用于调试）
             if isinstance(result, list) or isinstance(result, dict):
                 with open("funasr_raw_result.json", "w", encoding="utf-8") as f:
                     import json
                     json.dump(result, f, ensure_ascii=False, indent=2)
-                    print("原始结果已保存到 funasr_raw_result.json")
+                    logger.debug("原始结果已保存到 funasr_raw_result.json")
             
             # 处理结果为字幕格式和文字时间戳
             subtitles, words_timestamps = self.process_funasr_result(result)
+            
+            # 发布转录完成事件
+            event_bus.publish('asr_result', {
+                'subtitles': subtitles,
+                'words_timestamps': words_timestamps
+            })
+            
+            # 发布转录完成事件
+            event_bus.publish('asr_complete', {
+                'subtitles': subtitles,
+                'words_timestamps': words_timestamps
+            })
             
             # 返回字幕列表和文字时间戳
             return subtitles, words_timestamps
             
         except Exception as e:
-            print(f"转录出错: {str(e)}")
+            error_info = {
+                'error': str(e),
+                'traceback': traceback.format_exc()
+            }
+            event_bus.publish('asr_error', error_info)
+            logger.error(f"转录出错: {str(e)}")
             import traceback
-            print(traceback.format_exc())
+            logger.error(traceback.format_exc())
             return [], []
     
     def convert_to_srt(self, subtitles, output_path):
-        """
-        将字幕转换为SRT格式并保存
-        
-        Args:
-            subtitles (list): 字幕列表
-            output_path (str): 输出文件路径
-        """
+        """将字幕转换为SRT格式并保存"""
         with open(output_path, 'w', encoding='utf-8') as f:
             for i, sub in enumerate(subtitles):
                 start_time_str = self.ms_to_srt_time(sub["start_time"])
@@ -136,7 +156,8 @@ class ASRProcessor:
                 f.write(f"{start_time_str} --> {end_time_str}\n")
                 f.write(f"{sub['text']}\n\n")
                 
-        print(f"SRT文件已保存: {output_path}")
+        logger.info(f"SRT文件已保存: {output_path}")
+        event_bus.publish('srt_saved', {'output_path': output_path})
     
     def ms_to_srt_time(self, ms):
         """将毫秒转换为SRT时间格式 (00:00:00,000)"""

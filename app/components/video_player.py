@@ -6,11 +6,13 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QTime, QTimer
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
+from PyQt6.QtGui import QFont, QColor, QPainter, QTextDocument
 
 
 class VideoPlayer(QWidget):
     # 自定义信号
     position_changed = pyqtSignal(int)  # 播放位置变化信号
+    state_changed = pyqtSignal(bool)    # 播放状态变化信号
     
     def __init__(self):
         """初始化视频播放器"""
@@ -19,9 +21,17 @@ class VideoPlayer(QWidget):
         self.media_player = QMediaPlayer()
         self.audio_output = QAudioOutput()
         self.media_player.setAudioOutput(self.audio_output)
+        self.audio_output.setVolume(0.7)  # 设置默认音量为70%
         
         self.media_path = None
         self.duration = 0
+        
+        # 字幕相关属性
+        self.current_subtitle = None
+        self.subtitle_font = QFont("Arial", 16)
+        self.subtitle_color = QColor(255, 255, 255)  # 白色
+        self.subtitle_background = QColor(0, 0, 0, 128)  # 半透明黑色
+        self.subtitle_position = Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter
         
         # 创建定时器以定期更新位置
         self.position_timer = QTimer()
@@ -46,9 +56,7 @@ class VideoPlayer(QWidget):
         # 视频控件
         self.video_widget = QVideoWidget()
         self.video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        
-        # 设置视频控件背景
-        self.video_widget.setStyleSheet("background-color: #222;")
+        self.video_widget.setStyleSheet("background-color: black;")
         
         # 连接媒体播放器和视频控件
         self.media_player.setVideoOutput(self.video_widget)
@@ -123,6 +131,51 @@ class VideoPlayer(QWidget):
         # 连接播放器持续时间变化信号
         self.media_player.durationChanged.connect(self.update_duration)
         
+        # 连接错误信号
+        self.media_player.errorOccurred.connect(self.handle_error)
+        
+        # 连接媒体状态变化信号
+        self.media_player.mediaStatusChanged.connect(self.handle_media_status)
+        
+        # 连接按钮动作
+        self.play_button.clicked.connect(self.toggle_play)
+        self.position_slider.sliderMoved.connect(self.set_position)
+        self.volume_slider.sliderMoved.connect(self.set_volume)
+        self.volume_button.clicked.connect(self.toggle_mute)
+
+    def handle_error(self, error):
+        """处理播放器错误"""
+        if error != QMediaPlayer.Error.NoError:
+            error_msg = "未知错误"
+            if error == QMediaPlayer.Error.ResourceError:
+                error_msg = "无法加载媒体资源"
+            elif error == QMediaPlayer.Error.FormatError:
+                error_msg = "不支持的媒体格式"
+            elif error == QMediaPlayer.Error.NetworkError:
+                error_msg = "网络错误"
+            elif error == QMediaPlayer.Error.AccessDeniedError:
+                error_msg = "访问被拒绝"
+            print(f"播放器错误: {error_msg}")
+
+    def handle_media_status(self, status):
+        """处理媒体状态变化"""
+        if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            print("媒体加载完成")
+            # 确保视频输出和音频输出已正确设置
+            if not self.media_player.hasVideo():
+                self.media_player.setVideoOutput(self.video_widget)
+            if not self.audio_output:
+                self.audio_output = QAudioOutput()
+                self.media_player.setAudioOutput(self.audio_output)
+                self.audio_output.setVolume(0.7)
+        elif status == QMediaPlayer.MediaStatus.InvalidMedia:
+            print("无效的媒体文件")
+        elif status == QMediaPlayer.MediaStatus.NoMedia:
+            print("没有加载媒体文件")
+        elif status == QMediaPlayer.MediaStatus.BufferedMedia:
+            print("媒体已缓冲")
+        elif status == QMediaPlayer.MediaStatus.StalledMedia:
+            print("媒体播放已暂停")
         # 连接视频输出相关信号
         if hasattr(self, 'video_output'):
             # 尝试连接视频输出的信号
@@ -134,7 +187,7 @@ class VideoPlayer(QWidget):
         self.volume_slider.sliderMoved.connect(self.set_volume)
         self.volume_button.clicked.connect(self.toggle_mute)
         
-    def load_media(self, file_path):
+    def set_media(self, file_path):
         """加载媒体文件"""
         self.media_path = file_path
         self.media_player.setSource(QUrl.fromLocalFile(file_path))
@@ -157,8 +210,38 @@ class VideoPlayer(QWidget):
             
     def play(self):
         """播放视频"""
-        if hasattr(self, 'media_player'):
-            self.media_player.play()
+        if not self.has_media():
+            print("没有加载媒体文件")
+            return
+            
+        if not self.media_player:
+            print("播放器未初始化")
+            return
+            
+        # 确保视频输出已设置
+        if not self.media_player.hasVideo():
+            self.media_player.setVideoOutput(self.video_widget)
+            
+        # 确保音频输出已设置
+        if not self.audio_output:
+            self.audio_output = QAudioOutput()
+            self.media_player.setAudioOutput(self.audio_output)
+            self.audio_output.setVolume(0.7)
+            
+        # 检查媒体状态
+        media_status = self.media_player.mediaStatus()
+        if media_status == QMediaPlayer.MediaStatus.NoMedia:
+            print("没有加载媒体文件")
+            return
+        elif media_status == QMediaPlayer.MediaStatus.InvalidMedia:
+            print("无效的媒体文件")
+            return
+            
+        # 开始播放
+        self.media_player.play()
+        
+        # 更新播放按钮状态
+        self.update_play_button(QMediaPlayer.PlaybackState.PlayingState)
         
     def pause(self):
         """暂停播放"""
@@ -172,7 +255,7 @@ class VideoPlayer(QWidget):
         
     def set_position(self, position):
         """设置播放位置"""
-        self.media_player.setPosition(position)
+        self.media_player.setPosition(int(position))
         
     def seek(self, position_ms):
         """
@@ -230,11 +313,10 @@ class VideoPlayer(QWidget):
         duration_info = self.format_time(self.media_player.duration())
         self.time_label.setText(f"{current_info} / {duration_info}")
         
-        # 发出位置变化信号
-        self.position_changed.emit(position)
-        
     def update_play_button(self, state):
-        """根据播放状态更新播放按钮图标"""
+        """更新播放按钮状态"""
+        is_playing = state == QMediaPlayer.PlaybackState.PlayingState
+        self.state_changed.emit(is_playing)
         if state == QMediaPlayer.PlaybackState.PlayingState:
             self.play_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))
         else:
@@ -273,3 +355,42 @@ class VideoPlayer(QWidget):
         if hasattr(self, 'media_player'):
             return self.media_player.duration()
         return 0
+
+    def paintEvent(self, event):
+        """重写绘制事件以显示字幕"""
+        if self.current_subtitle:
+            painter = QPainter(self)
+            doc = QTextDocument()
+            doc.setDefaultFont(self.subtitle_font)
+            
+            # 设置字幕样式
+            html = f'<div style="color: rgb(255,255,255); background-color: rgba(0,0,0,128); padding: 5px;">{self.current_subtitle}</div>'
+            doc.setHtml(html)
+            
+            # 计算字幕位置
+            x = (self.width() - doc.size().width()) / 2
+            y = self.height() - doc.size().height() - 20  # 距离底部20像素
+            
+            # 绘制字幕
+            painter.translate(x, y)
+            doc.drawContents(painter)
+            
+    def set_subtitle(self, text):
+        """设置当前字幕文本"""
+        self.current_subtitle = text
+        self.update()  # 触发重绘
+        
+    def set_subtitle_font(self, font):
+        """设置字幕字体"""
+        self.subtitle_font = font
+        self.update()
+        
+    def set_subtitle_color(self, color):
+        """设置字幕颜色"""
+        self.subtitle_color = color
+        self.update()
+        
+    def set_subtitle_background(self, color):
+        """设置字幕背景颜色"""
+        self.subtitle_background = color
+        self.update()
