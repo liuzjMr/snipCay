@@ -3,6 +3,7 @@
 
 import os
 import tempfile
+import traceback
 import torch
 from funasr import AutoModel
 from pathlib import Path
@@ -119,6 +120,21 @@ class ASRService:
             # 处理结果为字幕格式和文字时间戳
             subtitles, words_timestamps = self.process_funasr_result(result)
             
+            # 自动保存SRT文件到视频文件所在目录下的srt子目录中
+            if subtitles and len(subtitles) > 0:
+                # 获取视频文件所在目录
+                video_dir = os.path.dirname(media_path)
+                # 创建srt子目录
+                srt_dir = os.path.join(video_dir, "srt")
+                os.makedirs(srt_dir, exist_ok=True)
+                # 获取视频文件名（不含扩展名）
+                video_name = os.path.splitext(os.path.basename(media_path))[0]
+                # 构建SRT文件路径
+                srt_path = os.path.join(srt_dir, f"{video_name}.srt")
+                # 保存SRT文件
+                self.convert_to_srt(subtitles, srt_path)
+                logger.info(f"已自动保存SRT文件到: {srt_path}")
+            
             # 发布转录完成事件
             event_bus.publish('asr_result', {
                 'subtitles': subtitles,
@@ -141,7 +157,6 @@ class ASRService:
             }
             event_bus.publish('asr_error', error_info)
             logger.error(f"转录出错: {str(e)}")
-            import traceback
             logger.error(traceback.format_exc())
             return [], []
     
@@ -152,6 +167,7 @@ class ASRService:
                 start_time_str = self.ms_to_srt_time(sub["start_time"])
                 end_time_str = self.ms_to_srt_time(sub["end_time"])
                 
+                # SRT格式：序号、时间码、文本内容，每个字幕条目之间用空行分隔
                 f.write(f"{i+1}\n")
                 f.write(f"{start_time_str} --> {end_time_str}\n")
                 f.write(f"{sub['text']}\n\n")

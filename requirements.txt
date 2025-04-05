@@ -5,3 +5,4 @@ PyQt6==6.8.1
 PyQt6_sip==13.10.0
 torch==2.6.0
 torchaudio==2.6.0
+pysrt

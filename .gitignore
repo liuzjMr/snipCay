@@ -4,4 +4,4 @@ funasr_model/
 *.py[cod]
 *$py.class
 __pycache__/
-
+logs/

@@ -26,5 +26,13 @@ class ProgressDialog(QDialog):
     
     def set_progress(self, value, maximum=100):
         """设置进度值"""
+        # 确保value和maximum都是整数类型
+        try:
+            value = int(value)
+            maximum = int(maximum) if isinstance(maximum, (int, float, str)) else 100
+        except (ValueError, TypeError):
+            value = 0
+            maximum = 100
+            
         self.progress_bar.setRange(0, maximum)
         self.progress_bar.setValue(value)

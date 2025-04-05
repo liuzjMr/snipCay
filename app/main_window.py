@@ -1,19 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import os
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QPushButton, QListWidget, QLabel, QFileDialog, 
                             QSplitter,  QTabWidget, QTextEdit, QApplication,
                             QMessageBox, QDialog, QLineEdit,
-                            QFontComboBox, QSpinBox, QColorDialog)
+                            QFontComboBox, QSpinBox, QColorDialog,QMenu)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from app.components.video_player import VideoPlayer
 from app.utils.asr_transcribe import ASRTranscribeThread
 from app.utils.model_loader_task import ModelLoadThread
+from app.utils.batch_transcribe_queue import BatchTranscribeQueue
 from app.components.progress_dialog import ProgressDialog
 from app.utils.logger import setup_logger
-from app.components.video_player_controls import VideoPlayerControls
 from app.utils.event_bus import event_bus
 from app.utils.video_processor import VideoProcessor
 import json
@@ -30,6 +31,7 @@ class MainWindow(QMainWindow):
         self.words_timestamps = None
         self.asr = None
         self.asr_loaded = False  # 新增标志位
+        self.batch_queue = BatchTranscribeQueue()  # 批量转录队列
         self.setup_ui()
         
     def setup_ui(self):
@@ -39,6 +41,22 @@ class MainWindow(QMainWindow):
         self.central_widget = QWidget()
         self.central_widget.setLayout(main_layout)
         self.setCentralWidget(self.central_widget)
+
+         # 左侧视频列表面板
+        left_list_panel = QWidget()
+        left_list_layout = QVBoxLayout(left_list_panel)
+        left_list_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # 添加视频列表
+        self.video_list = QListWidget()
+        self.video_list.setAlternatingRowColors(True)
+        self.video_list.itemDoubleClicked.connect(self.on_video_list_double_clicked)
+        self.video_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.video_list.customContextMenuRequested.connect(self.show_video_context_menu)
+        self.video_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)  # 支持多选
+        self.video_list.setFixedWidth(200)
+        self.video_list.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        left_list_layout.addWidget(self.video_list)
         
         # 左侧面板 - 视频播放区域
         left_panel = QWidget()
@@ -51,11 +69,15 @@ class MainWindow(QMainWindow):
         self.video_player.setMinimumSize(640, 360)  # 确保视频播放器有足够大的尺寸
         self.left_layout.addWidget(self.video_player)
         
-        # 添加播放控制面板
-        self.setup_playback_controls()
         
         # 添加字幕样式设置面板
         self.setup_subtitle_style_controls()
+
+          # 创建左侧分割器
+        left_splitter = QSplitter(Qt.Orientation.Horizontal)
+        left_splitter.addWidget(left_list_panel)
+        left_splitter.addWidget(left_panel)
+        left_splitter.setSizes([200, 800])  # 设置初始宽度比例
         
         # 右侧面板 - 字幕和控制按钮
         right_panel = QWidget()
@@ -65,13 +87,23 @@ class MainWindow(QMainWindow):
         
         # 按钮区域
         button_layout = QHBoxLayout()
+        
+        # 导入按钮区域
+        import_layout = QHBoxLayout()
         self.import_button = QPushButton("导入视频")
         self.import_button.clicked.connect(self.import_video)
         self.import_button.setMinimumHeight(40)
         
+        
+        import_layout.addWidget(self.import_button)
+        
+        # 转录按钮区域
+        transcribe_layout = QHBoxLayout()
         self.transcribe_button = QPushButton("转录字幕")
         self.transcribe_button.clicked.connect(self.transcribe_video)
         self.transcribe_button.setMinimumHeight(40)
+        
+        transcribe_layout.addWidget(self.transcribe_button)
         
         # 添加文本剪辑按钮
         self.text_edit_button = QPushButton("按文本剪辑")
@@ -83,8 +115,9 @@ class MainWindow(QMainWindow):
         self.export_video_button.clicked.connect(self.export_video)
         self.export_video_button.setMinimumHeight(40)
         
-        button_layout.addWidget(self.import_button)
-        button_layout.addWidget(self.transcribe_button)
+        # 添加所有按钮到主按钮布局
+        button_layout.addLayout(import_layout)
+        button_layout.addLayout(transcribe_layout)
         button_layout.addWidget(self.text_edit_button)
         button_layout.addWidget(self.export_video_button)
         right_layout.addLayout(button_layout)
@@ -152,7 +185,7 @@ class MainWindow(QMainWindow):
         
         # 将左右面板添加到主布局
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(left_panel)
+        splitter.addWidget(left_splitter)
         splitter.addWidget(right_panel)
         splitter.setSizes([int(self.width() * 0.7), int(self.width() * 0.3)])
         splitter.setStretchFactor(0, 2)
@@ -171,8 +204,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("视频字幕剪辑工具")
         self.resize(1200, 700)
         
-        # 应用简单样式
-        self.apply_simple_style()
         
         # 初始化模型加载
         self.init_model_loader()
@@ -210,10 +241,19 @@ class MainWindow(QMainWindow):
         self.transcribe_button.setEnabled(True)
         self.statusBar().showMessage("模型加载完成", 5000)
 
-    def on_asr_progress(self, data):
+    def on_asr_progress(self, data, message=''):
         """ASR进度事件处理"""
-        progress = data.get('progress', 0)
-        message = data.get('message', '')
+        # 处理来自ASRTranscribeThread的进度信号(int, str)和来自event_bus的进度事件(dict)
+        if isinstance(data, dict):
+            # 来自event_bus的事件数据
+            progress = data.get('progress', 0)
+            message = data.get('message', '')
+        else:
+            # 来自ASRTranscribeThread的信号数据
+            progress = data
+            # message参数已经通过第二个参数传入
+            
+        # 显示进度信息
         self.statusBar().showMessage(f"{message} {progress}%")
 
     def on_asr_result(self, data):
@@ -230,6 +270,8 @@ class MainWindow(QMainWindow):
             
             self.subtitles = subtitles
             self.words_timestamps = words_timestamps
+            # 保存字幕文件
+            self.save_subtitles(subtitles, words_timestamps)
             self.update_subtitle_list()
             self.statusBar().showMessage(f"转录完成，共 {len(subtitles)} 条字幕")
         else:
@@ -237,6 +279,35 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("转录失败，未生成字幕")
             QMessageBox.warning(self, "转录失败", "转录过程未生成有效字幕，请检查视频文件。", 
                                 QMessageBox.StandardButton.Ok)
+                                
+    def on_transcribe_result(self, subtitles, words_timestamps):
+        """单个视频转录结果处理"""
+        if subtitles:
+            self.logger.info(f"转录完成，得到 {len(subtitles)} 条字幕")
+            if hasattr(self, 'progress_dialog') and self.progress_dialog:
+                self.progress_dialog.close()
+            QMessageBox.information(self, "转录完成", f"转录已完成，共生成 {len(subtitles)} 条字幕。", 
+                                    QMessageBox.StandardButton.Ok)
+            
+            self.subtitles = subtitles
+            self.words_timestamps = words_timestamps
+            self.update_subtitle_list()
+            self.statusBar().showMessage(f"转录完成，共 {len(subtitles)} 条字幕")
+        else:
+            self.logger.error("未接收到有效的转录结果")
+            self.statusBar().showMessage("转录失败，未生成字幕")
+            QMessageBox.warning(self, "转录失败", "转录过程未生成有效字幕，请检查视频文件。", 
+                                QMessageBox.StandardButton.Ok)
+                                
+    def on_transcribe_error(self, error):
+        """单个视频转录错误处理"""
+        self.logger.error(f"转录错误: {error}")
+        QMessageBox.critical(self, "转录错误", f"转录过程发生错误：{error}", 
+                            QMessageBox.StandardButton.Ok)
+        self.statusBar().showMessage("转录失败")
+        
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
 
     def on_asr_error(self, data):
         """ASR错误事件处理"""
@@ -249,6 +320,43 @@ class MainWindow(QMainWindow):
         
         if hasattr(self, 'progress_dialog') and self.progress_dialog:
             self.progress_dialog.close()
+
+    def save_subtitles(self, subtitles,words_timestamps):
+        """保存字幕到srt文件"""
+        if not self.media_path or not subtitles:
+            return
+            
+        # 创建srt目录
+        srt_dir = os.path.join(os.path.dirname(self.media_path), 'srt')
+        os.makedirs(srt_dir, exist_ok=True)
+        
+        # 生成srt文件名
+        video_name = os.path.splitext(os.path.basename(self.media_path))[0]
+        srt_path = os.path.join(srt_dir, f"{video_name}.srt")
+        
+        # 写入srt文件
+        with open(srt_path, 'w', encoding='utf-8') as f:
+            for i, subtitle in enumerate(subtitles, 1):
+                start_time = self.format_srt_time(subtitle['start_time'])
+                end_time = self.format_srt_time(subtitle['end_time'])
+                f.write(f"{i}\n{start_time} --> {end_time}\n{subtitle['text']}\n\n")
+        self.logger.info(f"字幕已保存到: {srt_path}")
+
+        words_path = os.path.join(srt_dir, f"{video_name}.words.json")
+        with open(words_path, 'w', encoding='utf-8') as f:
+            json.dump(self.words_timestamps, f, ensure_ascii=False, indent=2)
+        self.logger.info(f"逐字稿已保存到: {words_path}")
+        
+        
+    def format_srt_time(self, milliseconds):
+        """格式化时间为srt格式 (HH:MM:SS,mmm)"""
+        seconds = milliseconds // 1000
+        ms = milliseconds % 1000
+        minutes = seconds // 60
+        seconds = seconds % 60
+        hours = minutes // 60
+        minutes = minutes % 60
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{ms:03d}"
 
     def handle_splitter_move(self, pos, index):
         """处理分割器移动事件"""
@@ -276,23 +384,36 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def import_video(self):
-        """导入视频文件"""
-        file_path, _ = QFileDialog.getOpenFileName(
+        """导入视频文件（支持多选）"""
+        file_paths, _ = QFileDialog.getOpenFileNames(
             self,
             "选择视频文件",
             "",
-            "视频文件 (*.mp4 *.avi *.mkv *.mov);;所有文件 (*.*)"
+            "视频文件 (*.mp4 *.avi *.mkv *.mov *.flv);;所有文件 (*.*)"
         )
         
-        if file_path:
-            self.logger.info(f"尝试导入视频: {file_path}")
-            self.media_path = file_path
-            self.video_player.set_media(file_path)
-            self.logger.info(f"成功导入视频: {file_path}")
-            self.statusBar().showMessage(f"已导入视频: {file_path}")
+        if file_paths:
+            self.logger.info(f"导入视频: {len(file_paths)} 个文件")
+            
+            # 清空当前队列和列表
+            self.batch_queue.clear_queue()
+            self.video_list.clear()
+            
+            # 添加视频到队列和列表
+            self.batch_queue.add_videos(file_paths)
+            for path in file_paths:
+                self.video_list.addItem(os.path.basename(path))
+            
+            # 加载第一个视频到播放器
+            if file_paths:
+                self.media_path = file_paths[0]
+                self.video_player.set_media(file_paths[0])
+                
+            self.statusBar().showMessage(f"已导入 {len(file_paths)} 个视频")
+            
 
     def transcribe_video(self):
-        """转录视频"""
+        """转录单个视频"""
         if not self.media_path:
             QMessageBox.warning(self, "提示", "请先导入视频文件", 
                                 QMessageBox.StandardButton.Ok)
@@ -308,14 +429,128 @@ class MainWindow(QMainWindow):
         
         # 创建并启动转录线程
         self.transcribe_thread = ASRTranscribeThread(self.asr, self.media_path)
+        self.transcribe_thread.progress_signal.connect(self.on_asr_progress)
+        self.transcribe_thread.result_signal.connect(self.on_transcribe_result)
+        self.transcribe_thread.error_signal.connect(self.on_transcribe_error)
         self.transcribe_thread.start()
+        
+    def batch_transcribe_videos(self):
+        """批量转录视频"""
+        # 检查队列是否为空
+        if not self.batch_queue.video_queue:
+            QMessageBox.warning(self, "提示", "批量转录队列为空，请先批量导入视频", 
+                                QMessageBox.StandardButton.Ok)
+            return
+        
+        # 检查ASR模型是否加载完成
+        if not self.asr_loaded or not self.asr:
+            QMessageBox.warning(self, "提示", "AI引擎尚未加载完成，请稍候", 
+                                QMessageBox.StandardButton.Ok)
+            return
+        
+        # 连接批量转录队列的信号
+        self.batch_queue.queue_progress_signal.connect(self.on_batch_progress)
+        self.batch_queue.queue_completed_signal.connect(self.on_batch_completed)
+        self.batch_queue.video_start_signal.connect(self.on_batch_video_start)
+        self.batch_queue.video_completed_signal.connect(self.on_batch_video_completed)
+        
+        # 显示进度对话框
+        self.show_progress_dialog("批量转录", "正在准备批量转录...")
+        
+        # 开始批量转录
+        self.batch_queue.start_processing(self.asr)
+        
+    def on_batch_progress(self, current_index, total_count):
+        """批量转录进度更新"""
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            progress = int((current_index / total_count) * 100)
+            self.progress_dialog.set_progress(progress, f"正在处理第 {current_index}/{total_count} 个视频")
+            self.statusBar().showMessage(f"批量转录进度: {current_index}/{total_count}")
+            
+    def on_batch_video_start(self, video_path):
+        """批量转录开始处理某个视频"""
+        self.logger.info(f"开始处理视频: {video_path}")
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.set_message(f"正在转录: {os.path.basename(video_path)}")
+        
+        # 设置当前视频到播放器
+        self.media_path = video_path
+        self.video_player.set_media(video_path)
+        
+        # 创建并启动转录线程
+        self.transcribe_thread = ASRTranscribeThread(self.asr, video_path)
+        self.transcribe_thread.progress_signal.connect(self.on_asr_progress)
+        self.transcribe_thread.result_signal.connect(lambda subtitles, words_timestamps: 
+                                                  self.on_batch_transcribe_result(video_path, subtitles, words_timestamps))
+        self.transcribe_thread.error_signal.connect(lambda error: 
+                                                self.on_batch_transcribe_error(video_path, error))
+        self.transcribe_thread.start()
+        
+    def on_batch_video_completed(self, video_path):
+        """批量转录某个视频完成"""
+        self.logger.info(f"视频处理完成: {video_path}")
+        
+    def on_batch_completed(self):
+        """批量转录全部完成"""
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+            
+        # 获取所有结果
+        results = self.batch_queue.get_results()
+        
+        QMessageBox.information(
+            self, 
+            "批量转录完成", 
+            f"批量转录已完成，共处理 {len(results)} 个视频。", 
+            QMessageBox.StandardButton.Ok
+        )
+        
+        self.statusBar().showMessage(f"批量转录完成，共处理 {len(results)} 个视频")
+        
+    def on_batch_transcribe_result(self, video_path, subtitles, words_timestamps):
+        """批量转录单个视频结果处理"""
+        self.logger.info(f"视频 {video_path} 转录完成，得到 {len(subtitles)} 条字幕")
+        
+        # 通知批量队列管理器该视频已处理完成
+        self.batch_queue.on_video_transcribed(video_path, subtitles, words_timestamps)
+        
+        # 如果是当前显示的视频，更新UI
+        if self.media_path == video_path:
+            self.subtitles = subtitles
+            self.words_timestamps = words_timestamps
+            self.update_subtitle_list()
+            
+    def on_batch_transcribe_error(self, video_path, error):
+        """批量转录单个视频错误处理"""
+        self.logger.error(f"视频 {video_path} 转录失败: {error}")
+        
+        # 显示错误但继续处理队列
+        QMessageBox.warning(
+            self, 
+            "视频转录失败", 
+            f"视频 {os.path.basename(video_path)} 转录失败: {error}\n\n将继续处理队列中的其他视频。", 
+            QMessageBox.StandardButton.Ok
+        )
+        
+        # 通知批量队列管理器该视频已处理完成（虽然失败）
+        self.batch_queue.on_video_transcribed(video_path, [], [])
 
     def update_subtitle_list(self, filter_text=""):
         """更新字幕列表"""
+        self.subtitle_list.clear()
+  
+        # 如果内存中没有字幕，尝试从srt文件加载
+        if not self.subtitles:
+            srt_dir = os.path.join(os.path.dirname(self.media_path), 'srt')
+            video_name = os.path.splitext(os.path.basename(self.media_path))[0]
+            srt_path = os.path.join(srt_dir, f"{video_name}.srt")
+            if os.path.exists(srt_path):
+                self.load_srt_file(srt_path)
+                self.logger.info(f"从文件加载字幕: {srt_path}")
+        
         if not self.subtitles:
             return
-        
-        self.subtitle_list.clear()
+            
         for subtitle in self.subtitles:
             text = subtitle.get('text', '')
             start_time = subtitle.get('start_time', 0)
@@ -328,11 +563,55 @@ class MainWindow(QMainWindow):
             start_str = self.format_time(start_time)
             end_str = self.format_time(end_time)
             
-            self.logger.debug(f"添加字幕: {text} ({start_str}-{end_str})")
             item_text = f"[{start_str} - {end_str}] {text}"
             self.subtitle_list.addItem(item_text)
         
-        self.logger.info(f"字幕列表更新完成，显示 {len(self.subtitles)} 条")
+        self.logger.info(f"字幕列表更新完成，显示 {self.subtitle_list.count()} 条")
+        
+    def load_srt_file(self, srt_path):
+        """从srt文件加载字幕"""
+        import pysrt
+        subs = pysrt.open(srt_path, encoding='utf-8')
+        
+        subtitles = []
+        for sub in subs:
+            # 转换时间为毫秒
+            start_time = (sub.start.hours * 3600 + sub.start.minutes * 60 + 
+                        sub.start.seconds) * 1000 + sub.start.milliseconds
+            end_time = (sub.end.hours * 3600 + sub.end.minutes * 60 + 
+                        sub.end.seconds) * 1000 + sub.end.milliseconds
+            
+            subtitles.append({
+                'text': sub.text,
+                'start_time': start_time,
+                'end_time': end_time
+            })
+        self.subtitles = subtitles
+        self.logger.info(f"成功加载字幕文件: {srt_path}")
+
+        # 尝试加载逐字稿
+        words_path = os.path.join(os.path.dirname(srt_path), f"{os.path.splitext(os.path.basename(srt_path))[0]}.words.json")
+        if os.path.exists(words_path):
+            with open(words_path, 'r', encoding='utf-8') as f:
+                self.words_timestamps = json.load(f)
+            self.logger.info(f"成功加载逐字稿: {words_path}")
+        else:
+            self.logger.warning(f"未找到逐字稿文件: {words_path}")
+            self.words_timestamps = None
+        
+        self.logger.info(f"成功加载字幕文件: {srt_path}")
+        
+            
+    def parse_srt_time(self, time_str):
+        """解析srt时间格式为毫秒"""
+        time_parts = time_str.replace(',', ':').split(':')
+        if len(time_parts) == 4:
+            hours = int(time_parts[0])
+            minutes = int(time_parts[1])
+            seconds = int(time_parts[2])
+            milliseconds = int(time_parts[3])
+            return hours * 3600000 + minutes * 60000 + seconds * 1000 + milliseconds
+        return 0
 
     def on_subtitle_clicked(self, item):
         """字幕点击事件处理"""
@@ -358,7 +637,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "请先转录视频生成逐字稿", 
                                 QMessageBox.StandardButton.Ok)
             return
-        
+         
+        # 清空现有布局中的所有部件
+        while self.text_edit_tab_layout.count():
+            item = self.text_edit_tab_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                # 如果是布局，也需要清空
+                while item.layout().count():
+                    sub_item = item.layout().takeAt(0)
+                    if sub_item.widget():
+                        sub_item.widget().deleteLater()
+                        
         self.logger.info(f"已导入逐字稿，共 {len(self.words_timestamps)} 个字")
         
         # 创建文本编辑器
@@ -472,24 +763,6 @@ class MainWindow(QMainWindow):
         """显示进度对话框"""
         self.progress_dialog = ProgressDialog(self, title, message)
         self.progress_dialog.show()
-
-    def setup_playback_controls(self):
-        """设置播放控制面板"""
-        # 创建播放控制组件
-        self.player_controls = VideoPlayerControls()
-        
-        # 连接信号
-        self.player_controls.play_clicked.connect(self.video_player.toggle_play)
-        self.player_controls.position_changed.connect(self.on_progress_changed)
-        self.player_controls.volume_changed.connect(self.video_player.set_volume)
-        
-        # 连接视频播放器的信号
-        self.video_player.position_changed.connect(self.update_position)
-        # self.video_player.duration_changed.connect(self.update_duration)
-        self.video_player.state_changed.connect(self.update_play_button)
-        
-        # 添加到左侧布局
-        self.left_layout.addWidget(self.player_controls)
         
     def update_position(self, position):
         """更新播放位置和字幕显示"""
@@ -937,5 +1210,46 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "导出失败", f"视频导出失败:\n{error_message}", 
                             QMessageBox.StandardButton.Ok)
 
-    def apply_simple_style(self):
-        """应用简单的窗口样式"""
+
+
+    def on_video_list_double_clicked(self, item):
+        """视频列表双击事件处理"""
+        index = self.video_list.row(item)
+        video_paths = self.batch_queue.get_video_paths()
+        if 0 <= index < len(video_paths):
+            self.media_path = video_paths[index]
+            self.video_player.set_media(video_paths[index])
+            # 加载该视频的字幕（如果有）
+            self.update_subtitle_list()
+            self.video_player.play()  # 自动开始播放
+            
+    def show_video_context_menu(self, position):
+        """显示视频右键菜单"""
+        menu = QMenu()
+        transcribe_action = menu.addAction("转录字幕")
+        remove_action = menu.addAction("移除视频")
+
+        # 获取当前选中的项
+        item = self.video_list.itemAt(position)
+        if item:
+            action = menu.exec(self.video_list.mapToGlobal(position))
+            if action == transcribe_action:
+                index = self.video_list.row(item)
+                video_paths = self.batch_queue.get_video_paths()
+                if 0 <= index < len(video_paths):
+                    self.media_path = video_paths[index]
+                    self.video_player.set_media(video_paths[index])
+                    self.transcribe_video()
+            elif action == remove_action:
+                index = self.video_list.row(item)
+                # 从队列和列表中移除视频
+                self.batch_queue.remove_video(index)
+                self.video_list.takeItem(index)
+                
+                # 如果移除的是当前播放的视频，清空播放器
+                if self.media_path == self.batch_queue.get_video_paths()[index]:
+                    self.media_path = None
+                    self.video_player.stop()
+                    self.subtitles = None
+                    self.words_timestamps = None
+                    self.update_subtitle_list()

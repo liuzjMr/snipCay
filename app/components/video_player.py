@@ -33,14 +33,6 @@ class VideoPlayer(QWidget):
         self.subtitle_background = QColor(0, 0, 0, 128)  # 半透明黑色
         self.subtitle_position = Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter
         
-        # 创建定时器以定期更新位置
-        self.position_timer = QTimer()
-        self.position_timer.setInterval(100)  # 每100毫秒检查一次
-        self.position_timer.timeout.connect(self.emit_position)
-        
-        # 当视频播放时启动定时器
-        self.media_player.playingChanged.connect(self.handle_playing_changed)
-        
         # 设置界面
         self.setup_ui()
         
@@ -67,6 +59,7 @@ class VideoPlayer(QWidget):
         # 创建控制面板
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(10, 5, 10, 5)
+        controls_layout.setSpacing(10)  # 增加控件间距
         
         # 播放/暂停按钮
         self.play_button = QPushButton()
@@ -74,43 +67,49 @@ class VideoPlayer(QWidget):
         self.play_button.setFixedSize(32, 32)
         controls_layout.addWidget(self.play_button)
         
-        # 停止按钮
-        self.stop_button = QPushButton()
-        self.stop_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop))
-        self.stop_button.setFixedSize(32, 32)
-        controls_layout.addWidget(self.stop_button)
+        # 时间和进度条区域
+        time_slider_layout = QHBoxLayout()
         
         # 当前时间标签
         self.time_label = QLabel("00:00:00")
         self.time_label.setStyleSheet("color: white;")
         self.time_label.setFixedWidth(70)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        controls_layout.addWidget(self.time_label)
+        time_slider_layout.addWidget(self.time_label)
         
         # 进度条
         self.position_slider = QSlider(Qt.Orientation.Horizontal)
         self.position_slider.setRange(0, 0)
-        controls_layout.addWidget(self.position_slider)
+        time_slider_layout.addWidget(self.position_slider)
         
         # 总时长标签
         self.duration_label = QLabel("00:00:00")
         self.duration_label.setStyleSheet("color: white;")
         self.duration_label.setFixedWidth(70)
         self.duration_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        controls_layout.addWidget(self.duration_label)
+        time_slider_layout.addWidget(self.duration_label)
+        
+        # 添加时间和进度条区域到主控制布局
+        controls_layout.addLayout(time_slider_layout, 1)
+        
+        # 音量控制区域
+        volume_layout = QHBoxLayout()
         
         # 音量按钮
         self.volume_button = QPushButton()
         self.volume_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume))
         self.volume_button.setFixedSize(32, 32)
-        controls_layout.addWidget(self.volume_button)
+        volume_layout.addWidget(self.volume_button)
         
         # 音量滑块
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(70)
         self.volume_slider.setFixedWidth(100)
-        controls_layout.addWidget(self.volume_slider)
+        volume_layout.addWidget(self.volume_slider)
+        
+        # 添加音量控制区域到主控制布局
+        controls_layout.addLayout(volume_layout)
         
         # 创建控制面板容器
         controls_frame = QFrame()
@@ -127,6 +126,8 @@ class VideoPlayer(QWidget):
         
         # 连接播放器位置变化信号
         self.media_player.positionChanged.connect(self.update_position)
+        # 直接在位置变化时发送自定义信号
+        self.media_player.positionChanged.connect(self.emit_position_direct)
         
         # 连接播放器持续时间变化信号
         self.media_player.durationChanged.connect(self.update_duration)
@@ -139,6 +140,7 @@ class VideoPlayer(QWidget):
         
         # 连接按钮动作
         self.play_button.clicked.connect(self.toggle_play)
+        # self.stop_button.clicked.connect(self.stop)  # 移除这一行
         self.position_slider.sliderMoved.connect(self.set_position)
         self.volume_slider.sliderMoved.connect(self.set_volume)
         self.volume_button.clicked.connect(self.toggle_mute)
@@ -181,16 +183,15 @@ class VideoPlayer(QWidget):
             # 尝试连接视频输出的信号
             pass
         
-        # 连接按钮动作
-        self.play_button.clicked.connect(self.toggle_play)
-        self.position_slider.sliderMoved.connect(self.set_position)
-        self.volume_slider.sliderMoved.connect(self.set_volume)
-        self.volume_button.clicked.connect(self.toggle_mute)
-        
     def set_media(self, file_path):
         """加载媒体文件"""
         self.media_path = file_path
         self.media_player.setSource(QUrl.fromLocalFile(file_path))
+        
+        # 重置进度条
+        self.position_slider.setValue(0)
+        self.time_label.setText("00:00:00")
+        
         self.stop()
         
     def get_media_path(self):
@@ -245,13 +246,11 @@ class VideoPlayer(QWidget):
         
     def pause(self):
         """暂停播放"""
-        if hasattr(self, 'media_player'):
-            self.media_player.pause()
+        self.media_player.pause()
         
     def stop(self):
         """停止播放"""
-        if hasattr(self, 'media_player'):
-            self.media_player.stop()
+        self.media_player.stop()
         
     def set_position(self, position):
         """设置播放位置"""
@@ -264,18 +263,15 @@ class VideoPlayer(QWidget):
         Args:
             position_ms (int): 目标时间点（毫秒）
         """
-        if hasattr(self, 'media_player'):
-            # 转换毫秒到视频播放器使用的格式
-            position = position_ms
-            self.media_player.setPosition(position)
-        
+        # 转换毫秒到视频播放器使用的格式
+        position = position_ms
+        self.media_player.setPosition(position)
+    
     def get_position(self):
         """获取当前播放位置（毫秒）"""
-        if hasattr(self, 'media_player'):
-            position = self.media_player.position()
-            self.position_changed.emit(position)
-            return position
-        return 0
+        position = self.media_player.position()
+        self.position_changed.emit(position)
+        return position
         
     def set_volume(self, volume):
         """设置音量"""
@@ -291,6 +287,17 @@ class VideoPlayer(QWidget):
         else:
             self.volume_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume))
         
+    def update_position(self, position):
+        """更新播放位置"""
+        # 更新滑块位置（不触发sliderMoved信号）
+        self.position_slider.blockSignals(True)
+        self.position_slider.setValue(position)
+        self.position_slider.blockSignals(False)
+        
+        # 更新时间标签，只显示当前时间，不显示总时长
+        current_info = self.format_time(position)
+        self.time_label.setText(current_info)
+        
     def update_duration(self, duration):
         """更新媒体总时长"""
         self.duration = duration
@@ -300,18 +307,6 @@ class VideoPlayer(QWidget):
         time = QTime(0, 0, 0).addMSecs(duration)
         format_string = "hh:mm:ss" if duration > 3600000 else "mm:ss"
         self.duration_label.setText(time.toString(format_string))
-        
-    def update_position(self, position):
-        """更新播放位置"""
-        # 更新滑块位置（不触发sliderMoved信号）
-        self.position_slider.blockSignals(True)
-        self.position_slider.setValue(position)
-        self.position_slider.blockSignals(False)
-        
-        # 更新时间标签
-        current_info = self.format_time(position)
-        duration_info = self.format_time(self.media_player.duration())
-        self.time_label.setText(f"{current_info} / {duration_info}")
         
     def update_play_button(self, state):
         """更新播放按钮状态"""
@@ -324,18 +319,26 @@ class VideoPlayer(QWidget):
         
     def is_playing(self):
         """检查是否正在播放"""
-        if hasattr(self, 'media_player'):
-            return self.media_player.isPlaying()
-        return False
+        return self.media_player.isPlaying()
+        
 
     def format_time(self, milliseconds):
-        """格式化时间（毫秒转为时:分:秒.毫秒）"""
+        """格式化时间（毫秒转为时:分:秒）"""
+        if milliseconds < 0:
+            milliseconds = 0
+            
         seconds = milliseconds // 1000
         minutes = seconds // 60
         hours = minutes // 60
-        milliseconds %= 1000
         
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+        seconds %= 60
+        minutes %= 60
+        
+        # 根据视频长度决定是否显示小时
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        else:
+            return f"{minutes:02d}:{seconds:02d}"
 
     def handle_playing_changed(self, playing):
         """处理播放状态变化"""
@@ -350,10 +353,16 @@ class VideoPlayer(QWidget):
             position = self.get_position()
             self.position_changed.emit(position)
 
+    def emit_position_direct(self, position):
+        """直接发送位置信号，替代定时器方法"""
+        # 可以添加节流逻辑，比如每200ms才发送一次信号
+        if not hasattr(self, '_last_emit_time') or position - getattr(self, '_last_emit_time', 0) >= 200:
+            self._last_emit_time = position
+            self.position_changed.emit(position)
+
     def get_duration(self):
         """获取视频总时长（毫秒）"""
-        if hasattr(self, 'media_player'):
-            return self.media_player.duration()
+        return self.media_player.duration()
         return 0
 
     def paintEvent(self, event):
@@ -363,8 +372,10 @@ class VideoPlayer(QWidget):
             doc = QTextDocument()
             doc.setDefaultFont(self.subtitle_font)
             
-            # 设置字幕样式
-            html = f'<div style="color: rgb(255,255,255); background-color: rgba(0,0,0,128); padding: 5px;">{self.current_subtitle}</div>'
+            # 设置字幕样式，使用类属性而不是硬编码颜色
+            color_str = f"rgb({self.subtitle_color.red()},{self.subtitle_color.green()},{self.subtitle_color.blue()})"
+            bg_color_str = f"rgba({self.subtitle_background.red()},{self.subtitle_background.green()},{self.subtitle_background.blue()},{self.subtitle_background.alpha()/255})"
+            html = f'<div style="color: {color_str}; background-color: {bg_color_str}; padding: 5px;">{self.current_subtitle}</div>'
             doc.setHtml(html)
             
             # 计算字幕位置
