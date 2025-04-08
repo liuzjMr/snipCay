@@ -116,3 +116,14 @@ class BatchTranscribeQueue(QObject):
     def get_video_paths(self):
         """获取队列中的所有视频路径"""
         return self.video_queue.copy()  # 返回副本以防止外部修改
+    
+    def remove_video(self, index):
+        """从队列中移除指定索引的视频"""
+        if 0 <= index < len(self.video_queue):
+            video_path = self.video_queue[index]
+            self.video_queue.pop(index)
+            if video_path in self.results:
+                del self.results[video_path]
+            self.logger.info(f"已从队列中移除视频: {video_path}")
+            return True
+        return False

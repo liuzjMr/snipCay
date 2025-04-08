@@ -538,7 +538,9 @@ class MainWindow(QMainWindow):
     def update_subtitle_list(self, filter_text=""):
         """更新字幕列表"""
         self.subtitle_list.clear()
-  
+
+        if not self.media_path:
+            return
         # 如果内存中没有字幕，尝试从srt文件加载
         if not self.subtitles:
             srt_dir = os.path.join(os.path.dirname(self.media_path), 'srt')
@@ -1242,14 +1244,14 @@ class MainWindow(QMainWindow):
                     self.transcribe_video()
             elif action == remove_action:
                 index = self.video_list.row(item)
-                # 从队列和列表中移除视频
-                self.batch_queue.remove_video(index)
-                self.video_list.takeItem(index)
-                
+                video_paths = self.batch_queue.get_video_paths()
                 # 如果移除的是当前播放的视频，清空播放器
-                if self.media_path == self.batch_queue.get_video_paths()[index]:
+                if video_paths and self.media_path == video_paths[index]:
                     self.media_path = None
                     self.video_player.stop()
                     self.subtitles = None
                     self.words_timestamps = None
                     self.update_subtitle_list()
+                 # 从队列和列表中移除视频
+                self.batch_queue.remove_video(index)
+                self.video_list.takeItem(index)
